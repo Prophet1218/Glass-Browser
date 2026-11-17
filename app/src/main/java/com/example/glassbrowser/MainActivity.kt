@@ -1316,6 +1316,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         L.init(this)
         if (wasEn != L.en) onLanguageChanged()
         applyGlassMode()
+        applyTabLayout()
     }
 
     /** Nyelvváltás után minden felirat az új nyelvre vált (újraindítás nélkül). */
@@ -2008,7 +2009,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             titleAlpha = { titleAlpha },
             // a kártyára koppintva a lap teljes képernyőre nagyít
             onSelect = { tab -> hideOverview(tab) },
-            onClose = { tab -> closeTab(tab) }
+            onClose = { tab -> closeTabAnimated(tab) }
         )
         tabList.layoutManager = GridLayoutManager(this, 2)
         tabList.adapter = tabAdapter
@@ -2018,6 +2019,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             removeDuration = 160
             addDuration = 200
         }
+        // (a halom elrendezés figyelője a húzás előtt kapja meg az érintést)
+        setupStackLayout()
         setupSwipeToClose()
 
         // görgetéskor az aktív lap üveg bezáró gombja a kártyával együtt mozog
@@ -2043,17 +2046,19 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     /**
-     * A lapváltóban a kártyát jobbra húzva bezárható: húzás közben a kártya követi az ujjat,
-     * kicsit elfordul, összemegy és elhalványul; elengedve kirepül, a többi kártya a helyére csúszik.
+     * A lapváltóban a kártyát jobbra vagy balra húzva bezárható: húzás közben a beállított bezárási
+     * animáció követi az ujjat (lásd [applyCloseFx]); elengedve végigfut, a többi kártya a helyére csúszik.
      */
     private fun setupSwipeToClose() {
         val callback = object : androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback(
-            0, androidx.recyclerview.widget.ItemTouchHelper.RIGHT
+            0, androidx.recyclerview.widget.ItemTouchHelper.LEFT or androidx.recyclerview.widget.ItemTouchHelper.RIGHT
         ) {
             private var armed = false
 
             override fun getMovementFlags(rv: RecyclerView, vh: RecyclerView.ViewHolder): Int {
                 if (!overviewShown || overviewBusy) return 0
+                // halomban csak a ténylegesen megérintett (legfelső) kártya húzható
+                if (stackLayout && !stackSwipeAllowed(vh)) return 0
                 return super.getMovementFlags(rv, vh)
             }
 
@@ -2089,15 +2094,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             ) {
                 val v = vh.itemView
                 val w = rv.width.toFloat().coerceAtLeast(1f)
-                val p = (dX / w).coerceIn(0f, 1f)
-                v.translationX = dX
-                v.pivotX = v.width / 2f
-                v.pivotY = v.height.toFloat()
-                v.rotation = 8f * p
-                val sc = 1f - 0.12f * p
-                v.scaleX = sc
-                v.scaleY = sc
-                v.alpha = (1f - 1.3f * p).coerceIn(0f, 1f)
+                val p = (kotlin.math.abs(dX) / w).coerceIn(0f, 1f)
+                if (dX != 0f) fxViews.add(v)
+                applyCloseFx(v, dX, closeAnimStyle())
                 // a küszöböt átlépve (és visszahúzva) egy kis rezgés jelez
                 if (isCurrentlyActive) {
                     val over = p >= 0.3f
@@ -2111,15 +2110,321 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             override fun clearView(rv: RecyclerView, vh: RecyclerView.ViewHolder) {
                 super.clearView(rv, vh)
                 val v = vh.itemView
-                v.translationX = 0f
-                v.rotation = 0f
-                v.scaleX = 1f
-                v.scaleY = 1f
-                v.alpha = 1f
+                fxViews.remove(v)
+                resetCloseFx(v)
                 armed = false
             }
         }
         androidx.recyclerview.widget.ItemTouchHelper(callback).attachToRecyclerView(tabList)
+    }
+
+    // ---------------------------------------------------------------- lapváltó: halom elrendezés, bezárási animációk
+
+    /** Igaz, ha a lapváltó "halom" elrendezésű (egymásra rakott, hátradöntött lapok, mint a régi Safariban). */
+    private var stackLayout = false
+    /** A halomban a kártyák oldalaránya (magasság / szélesség). */
+    private val stackRatio = 1.2f
+    /** A halomban egy kártyából ennyi (a magasság hányada) látszik ki a következő alól. */
+    private val stackPeek = 0.3f
+    /** Azok a kártyák, amelyeken épp bezárási animáció fut (ilyenkor a saját mozgásuk nem számít a halomba). */
+    private val fxViews = HashSet<View>()
+    private var stackDownX = 0f
+    private var stackDownY = 0f
+    private var stackGuardFor: RecyclerView.ViewHolder? = null
+    private var stackGuardOk = true
+    private val stackRect = RectF()
+
+    /** A beállított bezárási animáció ("fly", "shrink", "blur", "toss", "fold"). */
+    private fun closeAnimStyle(): String = prefs.getString("close_anim", "fly") ?: "fly"
+
+    /** A beállított elrendezés (rács / halom) alkalmazása, újraindítás nélkül. */
+    private fun applyTabLayout() {
+        if (!::tabAdapter.isInitialized) return
+        val stack = prefs.getString("tab_layout", "grid") == "stack"
+        if (stack == stackLayout) return
+        stackLayout = stack
+        fxViews.clear()
+        stackGuardFor = null
+        tabList.layoutManager = if (stack) {
+            androidx.recyclerview.widget.LinearLayoutManager(this)
+        } else {
+            GridLayoutManager(this, 2)
+        }
+        // a kártyák újra létrejönnek (a halomban más a felépítésük)
+        tabList.recycledViewPool.clear()
+        tabList.adapter = tabAdapter
+        tabList.invalidateItemDecorations()
+        if (overviewShown) scrollTabListTo(tabs.indexOf(activeTab).coerceAtLeast(0))
+    }
+
+    /** A halom elrendezés kellékei: átfedés, a kártyák felépítése, a 3D-s döntés görgetés közben. */
+    private fun setupStackLayout() {
+        // a halomban a kártyák nagy része az előző kártya fölé csúszik (csak a teteje látszik ki)
+        tabList.addItemDecoration(object : RecyclerView.ItemDecoration() {
+            override fun getItemOffsets(out: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
+                if (!stackLayout || parent.getChildLayoutPosition(view) <= 0) {
+                    out.set(0, 0, 0, 0)
+                } else {
+                    out.set(0, -stackOverlap(parent.width), 0, 0)
+                }
+            }
+        })
+        tabList.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
+            override fun onChildViewAttachedToWindow(view: View) {
+                if (stackLayout) styleStackItem(view)
+            }
+
+            override fun onChildViewDetachedFromWindow(view: View) {
+                // egy eltávolított / újrahasznosított kártyán ne maradjon rajta a bezárási animáció
+                if (fxViews.remove(view)) resetCloseFx(view)
+            }
+        })
+        // minden képkocka előtt (görgetés, beúszó / helyére csúszó kártyák) frissül a döntés
+        tabList.viewTreeObserver.addOnPreDrawListener {
+            if (stackLayout && overview.visibility == View.VISIBLE) applyStackTransforms()
+            true
+        }
+        // az érintés helye: halomban ebből derül ki, melyik kártyát húzzák valójában
+        tabList.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
+            override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    stackDownX = e.x
+                    stackDownY = e.y
+                    stackGuardFor = null
+                }
+                return false
+            }
+        })
+    }
+
+    /** Ennyivel csúszik a halomban egy kártya az előzőre (a kártya magasságának nagy része). */
+    private fun stackOverlap(listWidth: Int): Int {
+        val w = listWidth - tabList.paddingLeft - tabList.paddingRight - dp(14)
+        if (w <= 0) return 0
+        return (w * stackRatio * (1f - stackPeek)).toInt()
+    }
+
+    /**
+     * Halom elrendezésnél a kártya felépítése: alacsonyabb kártya, a cím a kártya tetejére kerül
+     * (sötét átmeneten, a bezáró gomb mellé), így a következő kártya nem takarja el.
+     */
+    private fun styleStackItem(item: View) {
+        val card = item.findViewById<AspectFrameLayout>(R.id.tabCard) ?: return
+        // a feltorlódó kártyák kilóghatnak a saját soruk alól
+        (item as? ViewGroup)?.clipChildren = false
+        if (card.ratio != stackRatio) {
+            card.ratio = stackRatio
+            card.requestLayout()
+        }
+        val title = item.findViewById<View>(R.id.tabTitle) ?: return
+        val row = title.parent as? LinearLayout ?: return
+        if (row.parent === card) return
+        (row.parent as? ViewGroup)?.removeView(row)
+        row.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+        row.setPadding(dp(14), 0, dp(46), 0)
+        row.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.argb(150, 0, 0, 0), Color.TRANSPARENT)
+        )
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48), Gravity.TOP)
+        // a kép fölé, de a kijelölő keret és a bezáró gomb alá
+        card.addView(row, minOf(1, card.childCount), lp)
+    }
+
+    /**
+     * A halom 3D-s hatása: minden kártya kicsit hátra van döntve (perspektívával), a lista teteje
+     * felé egyre jobban; a lista teteje fölé görgetett kártyák egy keskeny sávban torlódnak fel.
+     * A transzformáció a kártyán (nem a soron) van, így a húzás és a beúszó animációk nem ütköznek vele.
+     */
+    private fun applyStackTransforms() {
+        val rv = tabList
+        val top0 = rv.paddingTop.toFloat()
+        val contentH = (rv.height - rv.paddingTop - rv.paddingBottom).toFloat().coerceAtLeast(1f)
+        val pile = dp(26).toFloat()
+        val cam = 1600f * resources.displayMetrics.density
+        for (i in 0 until rv.childCount) {
+            val item = rv.getChildAt(i)
+            val card = item.findViewById<View>(R.id.tabCard) ?: continue
+            val y = item.top + card.top - top0 + (if (item in fxViews) 0f else item.translationY)
+            val c = if (y < 0f) 1f - kotlin.math.exp(y / pile) else 0f
+            val mapped = if (y < 0f) -pile * c else y
+            val u = (mapped / contentH).coerceIn(0f, 1f)
+            card.pivotX = card.width / 2f
+            card.pivotY = 0f
+            if (kotlin.math.abs(kotlin.math.abs(card.cameraDistance) - cam) > 1f) card.cameraDistance = cam
+            card.translationY = mapped - y
+            card.rotationX = 4f + 8f * (1f - u) + 14f * c
+            val s = 1f - 0.05f * (1f - u) - 0.06f * c
+            card.scaleX = s
+            card.scaleY = s
+        }
+    }
+
+    /** A lapváltó görgetése a lapra; halomban úgy, hogy a lap ne a feltorlódott sávba kerüljön. */
+    private fun scrollTabListTo(idx: Int) {
+        val lm = tabList.layoutManager
+        if (stackLayout && lm is androidx.recyclerview.widget.LinearLayoutManager) {
+            val w = tabList.width.takeIf { it > 0 } ?: root.width
+            val h = tabList.height.takeIf { it > 0 } ?: root.height
+            val contentH = h - tabList.paddingTop - tabList.paddingBottom
+            val off = (contentH * 0.28f).toInt() + if (idx > 0) stackOverlap(w) else 0
+            lm.scrollToPositionWithOffset(idx, off)
+        } else {
+            tabList.scrollToPosition(idx)
+        }
+    }
+
+    /** Halomban a húzás csak akkor indul, ha az ujj alatt valóban ez a kártya van legfelül. */
+    private fun stackSwipeAllowed(vh: RecyclerView.ViewHolder): Boolean {
+        if (stackGuardFor !== vh) {
+            stackGuardFor = vh
+            stackGuardOk = topItemAt(stackDownX, stackDownY) === vh.itemView
+        }
+        return stackGuardOk
+    }
+
+    /** A legfelső kártya sora a lista egy pontján (a kártyák tényleges, transzformált helye szerint). */
+    private fun topItemAt(x: Float, y: Float): View? {
+        for (i in tabList.childCount - 1 downTo 0) {
+            val child = tabList.getChildAt(i)
+            val card = child.findViewById<View>(R.id.tabCard) ?: continue
+            stackRect.set(0f, 0f, card.width.toFloat(), card.height.toFloat())
+            var cur: View = card
+            while (cur !== tabList) {
+                cur.matrix.mapRect(stackRect)
+                stackRect.offset(cur.left.toFloat(), cur.top.toFloat())
+                cur = cur.parent as? View ?: break
+            }
+            if (stackRect.contains(x, y)) return child
+        }
+        return null
+    }
+
+    /**
+     * A bezárási animáció egy állapota a kártya során. [dX] a vízszintes elmozdulás (húzásnál az
+     * ujjé, a × gombnál a lejátszott animációé), az előjele adja az irányt.
+     */
+    private fun applyCloseFx(v: View, dX: Float, style: String) {
+        val w = tabList.width.toFloat().coerceAtLeast(1f)
+        val p = (kotlin.math.abs(dX) / w).coerceIn(0f, 1f)
+        val dir = if (dX < 0f) -1f else 1f
+        val d = resources.displayMetrics.density
+        var px = v.width / 2f
+        var py = v.height / 2f
+        var tx = dX
+        var ty = 0f
+        var rot = 0f
+        var rotY = 0f
+        var sc = 1f
+        var alpha = (1f - 1.3f * p).coerceIn(0f, 1f)
+        var blur = 0f
+        when (style) {
+            "shrink" -> {
+                // a közepe felé zsugorodik és elhalványul
+                tx = dX * 0.25f
+                sc = 1f - 0.7f * p
+                alpha = (1f - 1.25f * p).coerceIn(0f, 1f)
+            }
+            "blur" -> {
+                // elmosódva elhalványul
+                tx = dX * 0.2f
+                sc = 1f - 0.06f * p
+                alpha = (1f - 1.1f * p).coerceIn(0f, 1f)
+                blur = 28f * d * p
+            }
+            "toss" -> {
+                // felfelé kilökődik, kicsit elfordulva
+                py = v.height.toFloat()
+                tx = dX * 0.55f
+                ty = -p * (v.height * 0.8f + 60f * d)
+                rot = 14f * p * dir
+                sc = 1f - 0.15f * p
+                alpha = (1f - 1.6f * (p - 0.2f)).coerceIn(0f, 1f)
+            }
+            "fold" -> {
+                // a húzás felőli éle körül, mint egy lap, elfordul és összecsukódik
+                val cam = 1600f * d
+                if (kotlin.math.abs(kotlin.math.abs(v.cameraDistance) - cam) > 1f) v.cameraDistance = cam
+                px = if (dir > 0f) v.width.toFloat() else 0f
+                tx = dX * 0.45f
+                rotY = -dir * 85f * p
+                alpha = (1f - 1.1f * p * p).coerceIn(0f, 1f)
+            }
+            else -> {
+                // kirepül: követi az ujjat, kicsit elfordul, összemegy és elhalványul
+                py = v.height.toFloat()
+                rot = 8f * p * dir
+                sc = 1f - 0.12f * p
+            }
+        }
+        v.pivotX = px
+        v.pivotY = py
+        v.translationX = tx
+        v.translationY = ty
+        v.rotation = rot
+        v.rotationY = rotY
+        v.scaleX = sc
+        v.scaleY = sc
+        v.alpha = alpha
+        if (style == "blur" && Build.VERSION.SDK_INT >= 31) {
+            v.setRenderEffect(
+                if (blur < 0.5f) null else RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.DECAL)
+            )
+        }
+    }
+
+    /** A bezárási animáció nyomainak eltávolítása a kártya soráról. */
+    private fun resetCloseFx(v: View) {
+        v.translationX = 0f
+        v.translationY = 0f
+        v.rotation = 0f
+        v.rotationY = 0f
+        v.scaleX = 1f
+        v.scaleY = 1f
+        v.alpha = 1f
+        v.pivotX = v.width / 2f
+        v.pivotY = v.height / 2f
+        if (Build.VERSION.SDK_INT >= 31) v.setRenderEffect(null)
+    }
+
+    /** Bezárás a × gombbal: ugyanaz a bezárási animáció fut le, mint húzásnál, utána zárul be a lap. */
+    private fun closeTabAnimated(tab: Tab) {
+        if (overviewBusy) return
+        val idx = tabs.indexOf(tab)
+        val item = if (overviewShown && idx >= 0) tabList.layoutManager?.findViewByPosition(idx) else null
+        if (item == null) {
+            closeTab(tab)
+            return
+        }
+        if (!fxViews.add(item)) return
+        val style = closeAnimStyle()
+        val w = tabList.width.toFloat().coerceAtLeast(1f)
+        val anim = ValueAnimator.ofFloat(0f, 1f)
+        anim.duration = if (style == "fly") 240L else 280L
+        anim.interpolator = android.view.animation.PathInterpolator(0.4f, 0f, 0.8f, 1f)
+        anim.addUpdateListener {
+            // (ha közben a kártya kigördült és újrahasznosult, már nem mozgatjuk)
+            if (item in fxViews) applyCloseFx(item, (it.animatedValue as Float) * w, style)
+        }
+        anim.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                if (overviewBusy || tab !in tabs) {
+                    if (fxViews.remove(item)) resetCloseFx(item)
+                    return
+                }
+                closeTab(tab)
+                // ha a kártya nem tűnt el a listából (pl. a lista újrarajzolódott), visszaáll
+                handler.postDelayed({
+                    if (item.parent === tabList && item in fxViews &&
+                        tabList.getChildViewHolder(item).bindingAdapterPosition != RecyclerView.NO_POSITION
+                    ) {
+                        fxViews.remove(item)
+                        resetCloseFx(item)
+                    }
+                }, 120L)
+            }
+        })
+        anim.start()
     }
 
     /** A weboldal helye a képernyőn (innen indul és ide érkezik a "repülő" kép). */
@@ -2159,6 +2464,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private fun cardRect(tab: Tab?): RectF? {
         val card = cardView(tab) ?: return null
         if (card.width <= 0 || card.height <= 0) return null
+        if (stackLayout) {
+            // halomban a kártya el van tolva, döntve és kicsinyítve: a tényleges (látható) helye kell
+            applyStackTransforms()
+            val r = RectF()
+            visualRect(card, r)
+            return r
+        }
         val a = IntArray(2)
         val b = IntArray(2)
         card.getLocationInWindow(a)
@@ -2298,7 +2610,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             tabAdapter.notifyDataSetChanged()
             tabList.scaleX = 1f
             tabList.scaleY = 1f
-            tabList.scrollToPosition(tabs.indexOf(tab).coerceAtLeast(0))
+            scrollTabListTo(tabs.indexOf(tab).coerceAtLeast(0))
             overview.alpha = 0f
             overview.visibility = View.VISIBLE
             // a sáv végig látszik, csak a tartalma tűnik át a lapváltó gombjaira
@@ -2419,7 +2731,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         val left = if (col == 0) margin else hero.width - margin - cw
         val top = hero.height - ch * 0.45f
         val s = dp(22).toFloat()
-        val from = RectF(left, top, left + cw, top + ch)
+        val from = if (stackLayout) {
+            // halomban az új lap a halom aljára kerül: alulról, középről nő ki
+            val sw = cw * 0.86f
+            val sh = ch * 0.86f
+            val sl = (hero.width - sw) / 2f
+            val st = hero.height - sh * 0.4f
+            RectF(sl, st, sl + sw, st + sh)
+        } else RectF(left, top, left + cw, top + ch)
         val full = RectF(0f, 0f, hero.width.toFloat(), hero.height.toFloat())
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -4373,7 +4692,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 selectTab(target, animate = false)
                 tabAdapter.notifyDataSetChanged()
                 updateTabCount()
-                tabList.scrollToPosition(tabs.indexOf(target).coerceAtLeast(0))
+                scrollTabListTo(tabs.indexOf(target).coerceAtLeast(0))
                 tabList.animate().alpha(1f).setDuration(200).start()
             }.start()
         } else {

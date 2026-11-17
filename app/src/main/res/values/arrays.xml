@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="search_engine_names">
+        <item>Google</item>
+        <item>DuckDuckGo</item>
+        <item>Bing</item>
+        <item>Brave Search</item>
+        <item>Startpage</item>
+    </string-array>
+    <string-array name="search_engine_values">
+        <item>https://www.google.com/search?q=</item>
+        <item>https://duckduckgo.com/?q=</item>
+        <item>https://www.bing.com/search?q=</item>
+        <item>https://search.brave.com/search?q=</item>
+        <item>https://www.startpage.com/do/search?q=</item>
+    </string-array>
+
+    <string-array name="glass_mode_names">
+        <item>Folyékony üveg (fénytörés)</item>
+        <item>Matt üveg (erős elmosás, fénytörés nélkül)</item>
+        <item>Egyszerű üveg (áttetsző, mosás nélkül)</item>
+    </string-array>
+    <string-array name="glass_mode_values">
+        <item>liquid</item>
+        <item>frost</item>
+        <item>simple</item>
+    </string-array>
+
+    <string-array name="app_theme_names">
+        <item>A telefon beállítását követi</item>
+        <item>Világos</item>
+        <item>Sötét</item>
+    </string-array>
+    <string-array name="app_theme_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+    </string-array>
+
+    <string-array name="top_style_names">
+        <item>Színsáv (az oldal nem mozdul)</item>
+        <item>Átúszó (elmosva csúszik az állapotsor mögé)</item>
+    </string-array>
+    <string-array name="top_style_values">
+        <item>band</item>
+        <item>flow</item>
+    </string-array>
+</resources>

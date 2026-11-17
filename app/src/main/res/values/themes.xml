@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- DayNight: a telefon (vagy az appban választott) világos/sötét módot követi -->
+    <style name="Theme.GlassBrowser" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="colorAccent">#0A84FF</item>
+        <item name="alertDialogTheme">@style/GlassDialog</item>
+    </style>
+
+    <!-- Üveg beállítások: a háttér a böngésző elmosott pillanatképe -->
+    <style name="Theme.GlassBrowser.Settings" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="colorAccent">#0A84FF</item>
+        <item name="alertDialogTheme">@style/GlassDialog</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.GlassBrowser.Plain" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <item name="colorAccent">#0A84FF</item>
+        <item name="alertDialogTheme">@style/GlassDialog</item>
+    </style>
+
+    <!-- Felugró ablakok: lekerekített üveglap a régi szögletes helyett -->
+    <style name="GlassDialog" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_glass</item>
+        <item name="colorAccent">#0A84FF</item>
+        <item name="android:backgroundDimAmount">0.3</item>
+        <item name="buttonBarPositiveButtonStyle">@style/GlassDialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/GlassDialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/GlassDialogButton</item>
+    </style>
+
+    <style name="GlassDialogButton" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">#0A84FF</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+</resources>

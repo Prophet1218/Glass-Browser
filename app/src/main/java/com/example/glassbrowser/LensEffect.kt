@@ -1,0 +1,394 @@
+package com.example.glassbrowser
+
+import android.graphics.BlendMode
+import android.graphics.Color
+import android.graphics.Shader
+import android.graphics.RenderEffect
+import android.graphics.RuntimeShader
+import android.view.View
+import androidx.annotation.RequiresApi
+
+/**
+ * Valós idejű üveg (Android 13+).
+ *
+ * Nem készít másolatot a képről: a célnézetre a videokártyán futó árnyalóprogramot (AGSL shader)
+ * tesz, amely
+ *  - a megadott üvegfelületek ("slotok": keresősáv részei, menü, javaslatok, csúszka) területén
+ *    elmossa, a szélek felé pedig megtöri a képet,
+ *  - a képernyő tetején (állapotsor) elmosást rajzol, kétféle stílusban,
+ *  - máshol változatlanul hagyja a képet.
+ * A tartalmat így csak egyszer kell kirajzolni: nincs villogás, nincs késés.
+ */
+@RequiresApi(33)
+class LensEffect(private val target: View) {
+
+    private val shader = RuntimeShader(SRC)
+    private val rects = Array(SLOTS) { FloatArray(4) }
+    private val params = Array(SLOTS) { FloatArray(3) }   // sugár, elmosás, erősség (0..1)
+    private val topTint = FloatArray(4)
+    private val rim = FloatArray(4)
+    private var rimWidth = 1f
+    private var refrHeight = 1f
+    private var refrAmount = 0f
+    private var dispersion = 0f
+    private var topH = 0f
+    private var topExt = 0f
+    private var topBlur = 0f
+    private var topMode = 0f
+    private var contentTop = 0f
+    private var dirty = true
+    private var attached = false
+
+    fun setParams(refractionHeightPx: Float, refractionAmountPx: Float, dispersion: Float) {
+        if (refrHeight != refractionHeightPx || refrAmount != refractionAmountPx ||
+            this.dispersion != dispersion
+        ) {
+            refrHeight = refractionHeightPx
+            refrAmount = refractionAmountPx
+            this.dispersion = dispersion
+            dirty = true
+        }
+    }
+
+    /** Egy üvegfelület helye a célnézet koordinátáiban; [radius] a sarok sugara, [blurPx] az elmosás. */
+    fun setSlot(
+        index: Int, l: Float, t: Float, r: Float, b: Float, radius: Float, blurPx: Float,
+        strength: Float = 1f
+    ) {
+        if (index < 0 || index >= SLOTS) return
+        val p = params[index]
+        val st = strength.coerceIn(0f, 1f)
+        if (set(rects[index], l, t, r, b) || p[0] != radius || p[1] != blurPx || p[2] != st) {
+            p[0] = radius
+            p[1] = blurPx
+            p[2] = st
+            dirty = true
+        }
+    }
+
+    // ---- "átúszó" felső elmosás: valódi (Gauss) elmosás, amely lefelé fokozatosan eltűnik
+    private var flowMask: RuntimeShader? = null
+    private val flowTint = FloatArray(4)
+    private var flowH = 0f
+    private var flowExt = 0f
+    private var flowBlur = 0f
+    private var flowPad = 0f
+    private var padShader: RuntimeShader? = null
+
+    /**
+     * Az oldal az állapotsor mögött úszik át; ott a rendszer saját, sima elmosását használjuk
+     * (nem a mintavételes közelítést), mert mozgó tartalmon az szemcsésen vibrálna.
+     * [height] = 0 vagy [blurPx] = 0: kikapcsolva.
+     */
+    fun setFlow(height: Float, extent: Float, blurPx: Float, tint: Int, padPx: Float = 0f) {
+        if (flowPad != padPx) {
+            flowPad = padPx
+            dirty = true
+        }
+        val changed = set(
+            flowTint,
+            Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f, Color.alpha(tint) / 255f
+        )
+        if (changed || flowH != height || flowExt != extent || flowBlur != blurPx) {
+            flowH = height
+            flowExt = extent
+            flowBlur = blurPx
+            dirty = true
+        }
+    }
+
+    fun clearSlot(index: Int) = setSlot(index, 0f, 0f, 0f, 0f, 0f, 0f)
+
+    /**
+     * Felső elmosás. [height] az állapotsor magassága (0 = kikapcsolva), alatta [extent] pixelen
+     * át halványul el. [tint] a ráfestett szín (az alfa az erőssége). [contentTopPx] fölött nincs
+     * tartalom, onnan nem veszünk mintát. [flow] = igaz: a tartalom valóban átúszik az állapotsor
+     * mögött, és felfelé egyre jobban elmosódik; hamis: elmosott színsáv.
+     */
+    fun setTop(height: Float, extent: Float, blurPx: Float, tint: Int, contentTopPx: Float, flow: Boolean) {
+        val changed = set(
+            topTint,
+            Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f, Color.alpha(tint) / 255f
+        )
+        val mode = if (flow) 1f else 0f
+        if (changed || topH != height || topExt != extent || topBlur != blurPx ||
+            contentTop != contentTopPx || topMode != mode
+        ) {
+            topH = height
+            topExt = extent
+            topBlur = blurPx
+            contentTop = contentTopPx
+            topMode = mode
+            dirty = true
+        }
+    }
+
+    /** Az üveg pereme és enyhe fehér fátyla, ha a shader rajzolja (0 alfa = nincs). */
+    fun setRim(color: Int, widthPx: Float) {
+        val changed = set(
+            rim,
+            Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, Color.alpha(color) / 255f
+        )
+        if (changed || rimWidth != widthPx) {
+            rimWidth = widthPx
+            dirty = true
+        }
+    }
+
+    private fun set(a: FloatArray, l: Float, t: Float, r: Float, b: Float): Boolean {
+        if (a[0] == l && a[1] == t && a[2] == r && a[3] == b) return false
+        a[0] = l
+        a[1] = t
+        a[2] = r
+        a[3] = b
+        return true
+    }
+
+    fun apply() {
+        if (!dirty && attached) return
+        dirty = false
+        attached = true
+        for (i in 0 until SLOTS) {
+            shader.setFloatUniform("g$i", rects[i])
+            shader.setFloatUniform("p$i", params[i])
+        }
+        shader.setFloatUniform("refrHeight", refrHeight)
+        shader.setFloatUniform("refrAmount", refrAmount)
+        shader.setFloatUniform("dispersion", dispersion)
+        shader.setFloatUniform("topH", topH)
+        shader.setFloatUniform("topExt", topExt)
+        shader.setFloatUniform("topBlur", topBlur)
+        shader.setFloatUniform("topMode", topMode)
+        shader.setFloatUniform("topTint", topTint)
+        shader.setFloatUniform("contentTop", contentTop)
+        shader.setFloatUniform("rimColor", rim)
+        shader.setFloatUniform("rimWidth", rimWidth)
+        val main = RenderEffect.createRuntimeShaderEffect(shader, "content")
+        if (flowH > 0f && flowBlur >= 1f) {
+            val mask = flowMask ?: RuntimeShader(MASK_SRC).also { flowMask = it }
+            mask.setFloatUniform("flowH", flowH)
+            mask.setFloatUniform("flowExt", flowExt)
+            mask.setFloatUniform("flowTint", flowTint)
+            // Az oldal fölötti üres sávot (a térközt, amíg az oldal a tetején van) az oldal első
+            // sorának színével töltjük ki, így nem sötét sáv mosódik el az állapotsor mögött.
+            val pad = padShader ?: RuntimeShader(PAD_SRC).also { padShader = it }
+            pad.setFloatUniform("padH", flowPad)
+            // térköz kitöltése -> elmosás -> maszk (lefelé átlátszó) -> ráfektetve az üveges képre
+            val blurred = RenderEffect.createChainEffect(
+                RenderEffect.createRuntimeShaderEffect(mask, "content"),
+                RenderEffect.createChainEffect(
+                    RenderEffect.createBlurEffect(flowBlur, flowBlur, Shader.TileMode.CLAMP),
+                    RenderEffect.createRuntimeShaderEffect(pad, "content")
+                )
+            )
+            target.setRenderEffect(RenderEffect.createBlendModeEffect(main, blurred, BlendMode.SRC_OVER))
+        } else {
+            target.setRenderEffect(main)
+        }
+    }
+
+    fun clear() {
+        if (attached) {
+            attached = false
+            target.setRenderEffect(null)
+        }
+    }
+
+    companion object {
+        /** Ennyi üvegfelületet tud egyszerre rajzolni; a kisebb sorszám van felül. */
+        const val SLOTS = 6
+
+        private const val MASK_SRC = """
+uniform shader content;
+uniform float flowH;
+uniform float flowExt;
+uniform vec4 flowTint;
+
+half4 main(vec2 c) {
+    // az állapotsor mögött teljesen elmosott, alatta [flowExt] képponton át fokozatosan eltűnik
+    float w = clamp(1.0 - (c.y - flowH) / max(flowExt, 1.0), 0.0, 1.0);
+    w = w * w * (3.0 - 2.0 * w);
+    if (w <= 0.0) {
+        return half4(0.0);
+    }
+    vec4 col = vec4(content.eval(c));
+    float ta = flowTint.a;
+    col.rgb = col.rgb * (1.0 - ta) + flowTint.rgb * ta * col.a;
+    return half4(col * w);
+}
+"""
+
+        private const val PAD_SRC = """
+uniform shader content;
+uniform float padH;
+
+half4 main(vec2 c) {
+    if (c.y < padH) {
+        return content.eval(vec2(c.x, padH + 1.5));
+    }
+    return content.eval(c);
+}
+"""
+
+        private const val SRC = """
+uniform shader content;
+uniform vec4 g0;
+uniform vec3 p0;
+uniform vec4 g1;
+uniform vec3 p1;
+uniform vec4 g2;
+uniform vec3 p2;
+uniform vec4 g3;
+uniform vec3 p3;
+uniform vec4 g4;
+uniform vec3 p4;
+uniform vec4 g5;
+uniform vec3 p5;
+uniform float refrHeight;
+uniform float refrAmount;
+uniform float dispersion;
+uniform float topH;
+uniform float topExt;
+uniform float topBlur;
+uniform float topMode;
+uniform vec4 topTint;
+uniform float contentTop;
+uniform vec4 rimColor;
+uniform float rimWidth;
+
+float sdRound(vec2 p, vec2 hs, float r) {
+    vec2 q = abs(p) - hs + vec2(r);
+    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+float sdRect(vec2 c, vec4 rect, float r) {
+    return sdRound(c - (rect.xy + rect.zw) * 0.5, (rect.zw - rect.xy) * 0.5, r);
+}
+
+vec4 tap(vec2 p) {
+    return vec4(content.eval(vec2(p.x, max(p.y, contentTop + 0.5))));
+}
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+vec4 blurAt(vec2 c, float r) {
+    if (r < 0.75) {
+        return tap(c);
+    }
+    float rot = hash(c) * 6.2832;
+    vec4 s = vec4(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 24; i++) {
+        float fi = float(i);
+        float u = (fi + 0.5) / 24.0;
+        float ang = fi * 2.39996 + rot;
+        float w = 1.0 - 0.75 * u;
+        s += tap(c + vec2(cos(ang), sin(ang)) * (sqrt(u) * r)) * w;
+        wsum += w;
+    }
+    return s / wsum;
+}
+
+vec4 glass(vec2 c, vec4 rect, float radius, float d, float blur, float strength) {
+    vec2 center = (rect.xy + rect.zw) * 0.5;
+    vec2 hs = (rect.zw - rect.xy) * 0.5;
+    vec2 p = c - center;
+    vec2 q = abs(p) - hs + vec2(radius);
+    vec2 n = vec2(0.0, 1.0);
+    if (q.x > 0.0 && q.y > 0.0) {
+        n = normalize(q);
+    } else if (q.x > q.y) {
+        n = vec2(1.0, 0.0);
+    }
+    n = n * sign(p);
+    float rh = max(min(refrHeight, radius), 1.0);
+    float t = clamp(1.0 + d / rh, 0.0, 1.0);
+    float k = (1.0 - sqrt(1.0 - t * t)) * refrAmount;
+    vec2 off = n * k;
+    vec4 col = blurAt(c - off, blur);
+    if (dispersion > 0.0 && k > 0.0) {
+        col.r = blurAt(c - off * (1.0 + dispersion), blur).r;
+        col.b = blurAt(c - off * (1.0 - dispersion), blur).b;
+    }
+    if (rimColor.a > 0.0) {
+        col.rgb = col.rgb + (vec3(1.0) - col.rgb) * (0.07 * rimColor.a);
+        float e = clamp(1.0 + d / max(rimWidth, 0.5), 0.0, 1.0);
+        float a = e * e * rimColor.a;
+        col.rgb = col.rgb * (1.0 - a) + rimColor.rgb * a;
+    }
+    col.a = 1.0;
+    if (strength < 1.0) {
+        col = mix(vec4(content.eval(c)), col, strength);
+    }
+    return col;
+}
+
+half4 main(vec2 c) {
+    if (topH > 0.0 && c.y < topH + topExt) {
+        float w = 1.0;
+        vec2 s = c;
+        if (topMode < 0.5) {
+            if (c.y > topH) {
+                w = 1.0 - (c.y - topH) / max(topExt, 1.0);
+            }
+            s = vec2(c.x, max(c.y, topH) + topBlur * w);
+        } else {
+            // átúszó: az állapotsor felső részén teljes erővel, onnan lefelé egyenletesen,
+            // fokozatosan gyengül; a teljes szélességben
+            // lefelé lágyan, folyamatosan halványul (az eddigi kiterjedésen belül marad)
+            float t = clamp(c.y / max(topH + topExt, 1.0), 0.0, 1.0);
+            w = 1.0 - smoothstep(0.2, 1.0, t);
+        }
+        vec4 col = blurAt(s, topBlur * w);
+        if (topMode > 0.5) {
+            // az elmosott és az éles kép között átúsztatunk, így nincs látható határ
+            col = mix(vec4(tap(c)), col, w);
+        }
+        float ta = topTint.a * w;
+        col.rgb = col.rgb * (1.0 - ta) + topTint.rgb * ta;
+        col.a = 1.0;
+        return half4(col);
+    }
+    if (g0.z > g0.x) {
+        float d0 = sdRect(c, g0, p0.x);
+        if (d0 < 0.0) {
+            return half4(glass(c, g0, p0.x, d0, p0.y, p0.z));
+        }
+    }
+    if (g1.z > g1.x) {
+        float d1 = sdRect(c, g1, p1.x);
+        if (d1 < 0.0) {
+            return half4(glass(c, g1, p1.x, d1, p1.y, p1.z));
+        }
+    }
+    if (g2.z > g2.x) {
+        float d2 = sdRect(c, g2, p2.x);
+        if (d2 < 0.0) {
+            return half4(glass(c, g2, p2.x, d2, p2.y, p2.z));
+        }
+    }
+    if (g3.z > g3.x) {
+        float d3 = sdRect(c, g3, p3.x);
+        if (d3 < 0.0) {
+            return half4(glass(c, g3, p3.x, d3, p3.y, p3.z));
+        }
+    }
+    if (g4.z > g4.x) {
+        float d4 = sdRect(c, g4, p4.x);
+        if (d4 < 0.0) {
+            return half4(glass(c, g4, p4.x, d4, p4.y, p4.z));
+        }
+    }
+    if (g5.z > g5.x) {
+        float d5 = sdRect(c, g5, p5.x);
+        if (d5 < 0.0) {
+            return half4(glass(c, g5, p5.x, d5, p5.y, p5.z));
+        }
+    }
+    return content.eval(c);
+}
+"""
+    }
+}

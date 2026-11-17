@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="7dp"
+    android:paddingTop="7dp"
+    android:paddingEnd="7dp"
+    android:paddingBottom="9dp">
+
+    <!-- A lap képe: a magassága a szélességéhez igazodik -->
+    <com.example.glassbrowser.AspectFrameLayout
+        android:id="@+id/tabCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/tab_card"
+        android:clickable="true"
+        android:focusable="true">
+
+        <com.example.glassbrowser.TopCropImageView
+            android:id="@+id/tabThumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null" />
+
+        <!-- Az éppen megnyitott lap jelölése -->
+        <View
+            android:id="@+id/tabActive"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/tab_card_active"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/tabClose"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="8dp"
+            android:background="@drawable/tab_close_bg"
+            android:contentDescription="@string/close_tab"
+            android:padding="7dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_close"
+            android:tint="#FFFFFF" />
+    </com.example.glassbrowser.AspectFrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="7dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/tabIcon"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="6dp"
+            android:contentDescription="@null"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tabTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#F2FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

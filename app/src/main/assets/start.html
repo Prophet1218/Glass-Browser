@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Új lap</title>
+<style>
+  :root {
+    --bg: #f7f8fb;
+    --text: #1d1f24;
+    --muted: #5f6470;
+    --box: #ffffff;
+    --box-border: rgba(0, 0, 0, .06);
+    --tile: #eef0f5;
+    --row: #ffffff;
+    --accent: #0a84ff;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1016;
+      --text: #eef0f5;
+      --muted: #9aa0ad;
+      --box: #1b1e26;
+      --box-border: rgba(255, 255, 255, .07);
+      --tile: #232733;
+      --row: #161920;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0 20px;
+  }
+
+  .top { padding-top: 14vh; text-align: center; }
+  .logo {
+    display: inline-flex; align-items: center; gap: 12px;
+    font-size: 34px; font-weight: 700; letter-spacing: -.5px;
+  }
+  .logo .mark {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, #b9e2ff 0%, #4aa3ff 38%, #1f5fd6 75%, #193f9e 100%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .45), 0 6px 18px rgba(31, 95, 214, .35);
+    position: relative;
+  }
+  .logo .mark::after {
+    content: ""; position: absolute; left: -7px; right: -7px; top: 19px; height: 8px;
+    border-radius: 50%; border: 2px solid rgba(255, 255, 255, .75); transform: rotate(-14deg);
+  }
+
+  .search {
+    margin: 28px auto 0; max-width: 560px; height: 54px;
+    display: flex; align-items: center; gap: 12px; padding: 0 20px;
+    background: var(--box); border: 1px solid var(--box-border); border-radius: 27px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .06);
+    color: var(--muted); font-size: 16px; cursor: text;
+  }
+  .search svg { flex: none; }
+
+  .tiles {
+    max-width: 560px; margin: 30px auto 0;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px 8px;
+  }
+  .tile { display: flex; flex-direction: column; align-items: center; text-decoration: none; color: var(--text); min-width: 0; }
+  .tile .ic {
+    width: 54px; height: 54px; border-radius: 50%; background: var(--tile);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    font-weight: 700; font-size: 20px; color: #fff;
+    transition: transform .15s;
+  }
+  .tile { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .tile:active .ic { transform: scale(.92); }
+  .tile .ic { transition: transform .25s cubic-bezier(.2, .9, .3, 1.4), box-shadow .25s; }
+  .tile.lift .ic { transform: scale(1.12); box-shadow: 0 8px 22px rgba(0, 0, 0, .22); }
+  .tile.add .ic { background: transparent; border: 1.5px dashed var(--muted); color: var(--muted); font-weight: 400; font-size: 28px; }
+  .hint { max-width: 560px; margin: 14px auto 0; text-align: center; font-size: 12px; color: var(--muted); opacity: .8; }
+  .hint a { color: var(--accent); text-decoration: none; }
+  .tile .ic img { width: 28px; height: 28px; border-radius: 6px; }
+  .tile .name {
+    margin-top: 8px; font-size: 12.5px; max-width: 100%;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted);
+  }
+
+  .section { max-width: 560px; margin: 34px auto 0; }
+  .section h2 { font-size: 15px; font-weight: 600; margin: 0 4px 10px; }
+  .list { background: var(--row); border: 1px solid var(--box-border); border-radius: 22px; overflow: hidden; }
+  .item { display: flex; align-items: center; gap: 14px; padding: 12px 16px; text-decoration: none; color: var(--text); }
+  .item + .item { border-top: 1px solid var(--box-border); }
+  .item .fav { width: 22px; height: 22px; border-radius: 5px; flex: none; background: var(--tile); }
+  .item .txt { min-width: 0; }
+  .item .t { font-size: 15px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .item .h { font-size: 12px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="logo"><span class="mark"></span>Glass</div>
+</div>
+
+<!-- A keresőmezőre koppintva a böngésző saját keresősávja nyílik meg -->
+<div class="search" id="search" role="button" aria-label="Keresés vagy webcím">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+  <span>Keresés vagy webcím</span>
+</div>
+
+<div class="tiles" id="tiles"></div>
+<div class="hint" id="hint">Tartsd nyomva a csempét a szerkesztéshez</div>
+
+<div class="section hidden" id="recentBox">
+  <h2>Legutóbb megnyitott</h2>
+  <div class="list" id="recent"></div>
+</div>
+
+<script>
+  // Alapértelmezett csempék; a böngésző a gyakran látogatott oldalaiddal helyettesíti (glassData).
+  var DEFAULT_TILES = [
+    { title: "Google", url: "https://www.google.com" },
+    { title: "YouTube", url: "https://www.youtube.com" },
+    { title: "Wikipedia", url: "https://hu.wikipedia.org" },
+    { title: "Index", url: "https://index.hu" },
+    { title: "Telex", url: "https://telex.hu" },
+    { title: "GitHub", url: "https://github.com" },
+    { title: "Térkép", url: "https://www.openstreetmap.org" },
+    { title: "Hacker News", url: "https://news.ycombinator.com" }
+  ];
+  var COLORS = ["#4285f4", "#e94335", "#7b8794", "#f29a1e", "#00a884", "#333a45", "#55b54a", "#ff6b4a"];
+
+  function host(u) {
+    try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return u; }
+  }
+  function favicon(u) {
+    return "https://icons.duckduckgo.com/ip3/" + host(u) + ".ico";
+  }
+  function el(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
+
+  // A szerkesztő ablak a csempe ikonja fölött nyílik meg: elküldjük a böngészőnek az ikon helyét.
+  function tileUrl(a, target) {
+    var r = (a.querySelector(".ic") || a).getBoundingClientRect();
+    return "glass://tile/" + target + "?l=" + r.left + "&t=" + r.top + "&r=" + r.right +
+      "&b=" + r.bottom + "&vw=" + window.innerWidth;
+  }
+
+  // Hosszú nyomás: a csempe "megemelkedik", és a böngésző szerkesztő ablaka nyílik meg.
+  function longPress(a, target) {
+    var timer = null, fired = false, sx = 0, sy = 0;
+    function cancel() { if (timer) { clearTimeout(timer); timer = null; } a.classList.remove("lift"); }
+    a.addEventListener("touchstart", function (e) {
+      fired = false; sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+      timer = setTimeout(function () {
+        timer = null; fired = true; a.classList.add("lift");
+        location.href = tileUrl(a, target);
+        setTimeout(function () { a.classList.remove("lift"); }, 450);
+      }, 480);
+    }, { passive: true });
+    a.addEventListener("touchmove", function (e) {
+      if (Math.abs(e.touches[0].clientX - sx) > 10 || Math.abs(e.touches[0].clientY - sy) > 10) cancel();
+    }, { passive: true });
+    a.addEventListener("touchend", function () { if (timer) cancel(); });
+    a.addEventListener("touchcancel", cancel);
+    a.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    a.addEventListener("click", function (e) { if (fired) { e.preventDefault(); fired = false; } });
+  }
+
+  function renderTiles(list, canAdd) {
+    var box = document.getElementById("tiles");
+    box.innerHTML = "";
+    list.slice(0, 8).forEach(function (t, i) {
+      var a = el("a", "tile"); a.href = t.url;
+      longPress(a, i);
+      var ic = el("div", "ic");
+      var name = t.title || host(t.url);
+      // betű a színes körben; ha betölt a webhely ikonja, azt mutatjuk
+      ic.textContent = name.charAt(0).toUpperCase();
+      ic.style.background = COLORS[i % COLORS.length];
+      var img = new Image();
+      img.onload = function () {
+        if (img.naturalWidth > 8) { ic.textContent = ""; ic.style.background = ""; ic.appendChild(img); }
+      };
+      img.src = favicon(t.url);
+      var n = el("div", "name"); n.textContent = name;
+      a.appendChild(ic); a.appendChild(n);
+      box.appendChild(a);
+    });
+    if (canAdd && list.length < 8) {
+      var add = el("a", "tile add"); add.href = "#";
+      add.addEventListener("click", function (e) { e.preventDefault(); location.href = tileUrl(add, "new"); });
+      var ic = el("div", "ic"); ic.textContent = "+";
+      var n = el("div", "name"); n.textContent = "Hozzáadás";
+      add.appendChild(ic); add.appendChild(n);
+      box.appendChild(add);
+    }
+  }
+
+  function renderRecent(list) {
+    var wrap = document.getElementById("recentBox");
+    var box = document.getElementById("recent");
+    box.innerHTML = "";
+    if (!list || !list.length) { wrap.classList.add("hidden"); return; }
+    wrap.classList.remove("hidden");
+    list.slice(0, 5).forEach(function (r) {
+      var a = el("a", "item"); a.href = r.url;
+      var f = el("img", "fav"); f.src = favicon(r.url); f.onerror = function () { f.style.visibility = "hidden"; };
+      var txt = el("div", "txt");
+      var t = el("div", "t"); t.textContent = r.title || host(r.url);
+      var h = el("div", "h"); h.textContent = host(r.url);
+      txt.appendChild(t); txt.appendChild(h);
+      a.appendChild(f); a.appendChild(txt);
+      box.appendChild(a);
+    });
+  }
+
+  // A böngésző hívja meg: { tiles: [{title,url}], recent: [{title,url}] }
+  window.glassData = function (data) {
+    var tiles = (data && data.tiles) ? data.tiles.slice() : [];
+    // a hiányzó helyeket az alapértelmezettekkel töltjük fel (ha a böngésző nem pontos listát küld)
+    if (!(data && data.exact)) {
+      DEFAULT_TILES.forEach(function (d) {
+        if (tiles.length < 8 && !tiles.some(function (t) { return host(t.url) === host(d.url); })) tiles.push(d);
+      });
+    }
+    renderTiles(tiles, !!(data && data.exact));
+    var hint = document.getElementById("hint");
+    hint.innerHTML = "";
+    hint.appendChild(document.createTextNode("Tartsd nyomva a csempét a szerkesztéshez"));
+    if (data && data.custom) {
+      hint.appendChild(document.createTextNode(" · "));
+      var r = el("a"); r.href = "glass://tile/reset"; r.textContent = "Visszaállítás";
+      hint.appendChild(r);
+    }
+    renderRecent(data && data.recent);
+  };
+
+  document.getElementById("search").addEventListener("click", function () {
+    location.href = "glass://search";
+  });
+
+  renderTiles(DEFAULT_TILES);
+</script>
+</body>
+</html>

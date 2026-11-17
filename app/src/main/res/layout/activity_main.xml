@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/app_bg"
+    android:clipChildren="false"
+    android:focusable="true"
+    android:focusableInTouchMode="true">
+
+    <!-- "Színpad": minden, ami az üveg MÖGÖTT van. Erre kerül az üveget rajzoló shader, ezért a
+         keresősáv és a menü azt töri meg, ami éppen itt látszik (weboldal vagy lapváltó). -->
+    <FrameLayout
+        android:id="@+id/scene"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Az aktív lap WebView-ja kerül ide -->
+        <FrameLayout
+            android:id="@+id/contentContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Lapváltó: az oldal elmosott képe, rajta a lapok rácsa -->
+        <FrameLayout
+            android:id="@+id/overview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/app_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/overviewBg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:importantForAccessibility="no"
+                android:scaleType="fitXY" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#A60B0D12" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/tabList"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false" />
+        </FrameLayout>
+
+        <!-- A lapváltó nyitásakor / zárásakor "repülő" oldalkép -->
+        <com.example.glassbrowser.HeroView
+            android:id="@+id/hero"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <!-- Kereső felület: a címsorra koppintva jön elő. Fent három fül (találatok, könyvjelzők,
+             előzmények), köztük üvegkapszula vált. -->
+        <FrameLayout
+            android:id="@+id/searchPage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/search_bg"
+            android:clickable="true"
+            android:focusable="false"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/searchColumn"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+
+                <FrameLayout
+                    android:id="@+id/segBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:layout_marginStart="16dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginEnd="16dp"
+                    android:padding="3dp">
+
+                    <View
+                        android:id="@+id/segCapsule"
+                        android:layout_width="10dp"
+                        android:layout_height="match_parent" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/seg0"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:text="Találatok"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/seg1"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:text="Könyvjelzők"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/seg2"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:text="Előzmények"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </FrameLayout>
+
+                <ScrollView
+                    android:id="@+id/searchScroll"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:fillViewport="false"
+                    android:overScrollMode="never">
+
+                    <LinearLayout
+                        android:id="@+id/searchList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="12dp" />
+                </ScrollView>
+            </LinearLayout>
+        </FrameLayout>
+    </FrameLayout>
+
+    <!-- Húzásra frissítés: az oldal tetején lehúzva jelenik meg -->
+    <FrameLayout
+        android:id="@+id/pullIndicator"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|center_horizontal"
+        android:alpha="0"
+        android:elevation="6dp">
+
+        <ImageView
+            android:id="@+id/pullIcon"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_reload" />
+    </FrameLayout>
+
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:indeterminate="false"
+        android:max="100"
+        android:progressBackgroundTint="#00000000"
+        android:progressTint="#0A84FF"
+        android:visibility="gone" />
+
+    <!-- Háromrészes keresősáv: vissza gomb, középső kapszula, lapok gomb -->
+    <LinearLayout
+        android:id="@+id/barRow"
+        android:layout_width="match_parent"
+        android:layout_height="54dp"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="10dp"
+        android:clipChildren="false"
+        android:orientation="horizontal">
+
+        <com.example.glassbrowser.PressLayout
+            android:id="@+id/barLeft"
+            android:layout_width="54dp"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:contentDescription="@string/back"
+            android:focusable="true">
+
+            <ImageView
+                android:id="@+id/iconBack"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_back" />
+
+            <ImageView
+                android:id="@+id/iconAdd"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:alpha="0"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_add"
+                android:visibility="invisible" />
+        </com.example.glassbrowser.PressLayout>
+
+        <com.example.glassbrowser.PressLayout
+            android:id="@+id/barCenter"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1">
+
+            <LinearLayout
+                android:id="@+id/browseRow"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp">
+
+                <ImageButton
+                    android:id="@+id/btnMenu"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@null"
+                    android:contentDescription="@string/menu"
+                    android:src="@drawable/ic_more" />
+
+                <EditText
+                    android:id="@+id/urlField"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@null"
+                    android:ellipsize="end"
+                    android:gravity="center"
+                    android:hint="@string/url_hint"
+                    android:imeOptions="actionGo"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri|textNoSuggestions"
+                    android:maxLines="1"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:selectAllOnFocus="true"
+                    android:textSize="15sp" />
+
+                <ImageButton
+                    android:id="@+id/btnReload"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@null"
+                    android:contentDescription="@string/reload"
+                    android:src="@drawable/ic_reload" />
+            </LinearLayout>
+
+            <!-- A lapváltóban a kapszula a lapok számát mutatja -->
+            <TextView
+                android:id="@+id/overviewLabel"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:alpha="0"
+                android:gravity="center"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:visibility="invisible" />
+        </com.example.glassbrowser.PressLayout>
+
+        <com.example.glassbrowser.PressLayout
+            android:id="@+id/barRight"
+            android:layout_width="54dp"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:contentDescription="@string/tabs"
+            android:focusable="true">
+
+            <!-- A lapváltóban kék "kész" gomb -->
+            <View
+                android:id="@+id/doneFill"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_margin="5dp"
+                android:alpha="0"
+                android:background="@drawable/done_fill"
+                android:visibility="invisible" />
+
+            <TextView
+                android:id="@+id/tabCount"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:background="@drawable/tab_badge"
+                android:gravity="center"
+                android:text="1"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/iconDone"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:alpha="0"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_check"
+                android:visibility="invisible" />
+        </com.example.glassbrowser.PressLayout>
+    </LinearLayout>
+
+    <!-- Hárompontos menü: a gombból nyílik ki -->
+    <View
+        android:id="@+id/menuScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
+        android:focusable="false"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:id="@+id/menuPanel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|left"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/menuItems"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="230dp"
+            android:orientation="vertical"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp" />
+    </FrameLayout>
+</FrameLayout>

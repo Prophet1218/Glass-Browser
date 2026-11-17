@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:allowBackup="true"
+        android:hardwareAccelerated="true"
+        android:icon="@mipmap/ic_frost_blue"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_frost_blue"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GlassBrowser">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- Így alapértelmezett böngészőnek is beállítható -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+
+        <!-- Választható alkalmazásikonok: mindegyik egy "álnév" a főablakhoz, saját ikonnal.
+             Egyszerre csak egy van bekapcsolva; a Beállítások > Alkalmazásikon váltja őket. -->
+        <activity-alias
+            android:name=".IconFrostBlue"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_frost_blue"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_frost_blue"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFlatBlue"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_flat_blue"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_flat_blue"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFlatPurple"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_flat_purple"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_flat_purple"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFlatGreen"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_flat_green"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_flat_green"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFlatOrange"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_flat_orange"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_flat_orange"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFlatPink"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_flat_pink"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_flat_pink"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFlatGraphite"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_flat_graphite"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_flat_graphite"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFrostPurple"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_frost_purple"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_frost_purple"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFrostGreen"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_frost_green"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_frost_green"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFrostOrange"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_frost_orange"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_frost_orange"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFrostPink"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_frost_pink"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_frost_pink"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFrostGraphite"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_frost_graphite"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_frost_graphite"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconLiquidBlue"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_liquid_blue"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_liquid_blue"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconLiquidPurple"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_liquid_purple"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_liquid_purple"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconLiquidGreen"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_liquid_green"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_liquid_green"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconLiquidOrange"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_liquid_orange"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_liquid_orange"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconLiquidPink"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_liquid_pink"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_liquid_pink"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconLiquidGraphite"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_liquid_graphite"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_liquid_graphite"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:theme="@style/Theme.GlassBrowser.Settings" />
+
+        <activity
+            android:name=".ScriptsActivity"
+            android:exported="false"
+            android:label="Felhasználói szkriptek"
+            android:theme="@style/Theme.GlassBrowser.Plain" />
+    </application>
+</manifest>

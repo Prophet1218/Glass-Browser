@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_bg">#FFFFFF</color>
+    <color name="settings_scrim">#A6F3F4F8</color>
+    <color name="settings_text">#14171F</color>
+    <color name="top_tint">#73FFFFFF</color>
+    <color name="dialog_bg">#CCFFFFFF</color>
+    <color name="dialog_stroke">#33000000</color>
+    <color name="search_bg">#B8F3F4F8</color>
+</resources>

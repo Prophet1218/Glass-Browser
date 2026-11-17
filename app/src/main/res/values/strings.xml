@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Glass Browser</string>
+    <string name="url_hint">Keresés vagy webcím</string>
+    <string name="back">Vissza</string>
+    <string name="reload">Frissítés</string>
+    <string name="tabs">Lapok</string>
+    <string name="menu">Menü</string>
+    <string name="close_tab">Lap bezárása</string>
+    <string name="settings_title">Beállítások</string>
+</resources>

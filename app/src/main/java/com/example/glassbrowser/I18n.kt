@@ -256,6 +256,7 @@ object L {
         "Javaslatok" to "Suggestions",
         "Váltás erre a lapra" to "Switch to tab",
         "Webcím kimásolva" to "Address copied",
+        "Vágólapra másolva" to "Copied to clipboard",
         "Oldal lefordítva" to "Page translated",
         "Fordítás…" to "Translating…",
         "Lefordítod az oldalt?" to "Translate page?",

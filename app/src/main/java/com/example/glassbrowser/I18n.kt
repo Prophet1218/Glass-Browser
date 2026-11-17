@@ -251,7 +251,10 @@ object L {
         "A Chrome szinkronizálását (könyvjelzők, megnyitott lapok, Chrome-előzmények) a Google csak a saját böngészőjének engedi, más böngésző nem tud rácsatlakozni. A fenti pontokkal a jelszavaid és a Google-előzményeid így is elérhetők; az itt megnyitott oldalak előzményei csak ezen a telefonon tárolódnak." to
             "Google only allows Chrome sync (bookmarks, open tabs, Chrome history) in its own browser; other browsers can't connect to it. With the items above your passwords and Google history are still available; the history of pages opened here is stored only on this phone.",
         "Állapot" to "Status",
-        "Térkép" to "Maps"
+        "Térkép" to "Maps",
+        "Legutóbb megnyitott" to "Recently opened",
+        "Javaslatok" to "Suggestions",
+        "Váltás erre a lapra" to "Switch to tab"
     )
 
     private val HU: Map<String, String> = EN.entries.associate { (k, v) -> v to k }

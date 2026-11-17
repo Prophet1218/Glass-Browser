@@ -200,7 +200,15 @@ class MainActivity : AppCompatActivity() {
     private var suggestSeq = 0
     private val suggestRunnable = Runnable { updateSuggestions(typedText()) }
 
-    private class SuggestItem(val text: String, val sub: String?, val url: String?, val icon: Int)
+    /** A kereső felület egy sora. [kind]: 0 = címsor, 1 = keresési javaslat, 2 = weboldal (ikonnal). */
+    private class SuggestItem(
+        val text: String,
+        val sub: String?,
+        val url: String?,
+        val icon: Int,
+        val kind: Int = 2,
+        val tab: Tab? = null
+    )
 
     private val activeWebView: GlassWebView? get() = activeTab?.webView
     private val currentUrl: String get() = activeTab?.url ?: START_URL
@@ -372,7 +380,8 @@ class MainActivity : AppCompatActivity() {
         // a menü és a javaslatok ugyanazt az üveget kapják, mint a keresősáv (együtt állíthatók)
         panelBlur = lensBlur
         // felül rögzített sávnál az állapotsor mögé is a sáv kerül: ott nincs külön felső elmosás
-        topBlurOn = prefs.getBoolean("top_blur", true) && !dockTop
+        // rögzített sávnál az állapotsor mögött fix világos / sötét háttér van (a telefon módja szerint)
+        topBlurOn = prefs.getBoolean("top_blur", true) && !docked
         // csak a "band" (színsáv) és a "flow" (átúszó) stílus maradt
         topStyle = if (prefs.getString("top_style", "flow") == "band") "band" else "flow"
         topStrength = prefs.getInt("top_blur_strength", 10) * d
@@ -464,7 +473,9 @@ class MainActivity : AppCompatActivity() {
         if (docked) {
             barLeft.background = null
             barRight.background = null
-            barCenter.background = GradientDrawable().apply { cornerRadius = dp(22).toFloat() }
+            // kisebb, teljesen lekerekített kapszula (függőlegesen beljebb húzva)
+            val pill = GradientDrawable().apply { cornerRadius = dp(100).toFloat() }
+            barCenter.background = android.graphics.drawable.InsetDrawable(pill, 0, dp(6), 0, dp(6))
             updateDockPill()
         } else {
             barLeft.background = barSkins[0]
@@ -486,7 +497,9 @@ class MainActivity : AppCompatActivity() {
         if (!docked) return
         val c = contentColor ?: if (night) Color.WHITE else Color.BLACK
         val light = Color.red(c) > 128
-        (barCenter.background as? GradientDrawable)?.setColor(
+        val bg = barCenter.background
+        val pill = (bg as? android.graphics.drawable.InsetDrawable)?.drawable ?: bg
+        (pill as? GradientDrawable)?.setColor(
             if (light) Color.argb(34, 255, 255, 255) else Color.argb(18, 0, 0, 0)
         )
     }
@@ -815,7 +828,7 @@ class MainActivity : AppCompatActivity() {
      * pillanatra üres sáv marad (az állapotsor mögött), az az oldal színében látszik, nem feketén.
      */
     private fun sampleTopColor() {
-        if (topProbeBusy || capturing || !topBlurOn) return
+        if (topProbeBusy || capturing || !topBlurOn || docked) return
         val wv = activeWebView ?: return
         val w = scene.width
         val top = webTop().coerceAtLeast(0) + dp(1)
@@ -1443,7 +1456,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Bélyegkép az aktív lapról, mielőtt másik lapra váltunk. */
     private fun captureThumbnail(tab: Tab, done: () -> Unit) {
-        val bmp = renderPage(tab, 0.4f)
+        val bmp = renderPage(tab, 0.55f)
         if (bmp != null) {
             tab.thumbnail = bmp
             ThumbStore.save(applicationContext, tab.id, bmp)
@@ -1455,7 +1468,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Kép az aktív oldalról a lapváltó animációjához: a teljes oldal, a sáv mögötti rész is. */
     private fun captureSnapshot(tab: Tab, done: () -> Unit) {
-        val bmp = renderPage(tab, 0.5f)
+        val bmp = renderPage(tab, 0.6f)
         if (bmp != null) {
             tab.thumbnail = bmp
             snapshotFull = true
@@ -1510,6 +1523,8 @@ class MainActivity : AppCompatActivity() {
 
     /** A többi lap nagy képét kisebbre cseréljük, hogy sok lapnál se fogyjon el a memória. */
     private fun shrinkOtherThumbnails(keep: Tab) {
+        // csak sok lapnál kicsinyítünk (különben a lap megnyitásakor elmosódott lenne a kép)
+        if (tabs.size <= 10) return
         val limit = (scene.width * 0.3f).toInt().coerceAtLeast(64)
         for (t in tabs) {
             if (t === keep) continue
@@ -1872,17 +1887,59 @@ class MainActivity : AppCompatActivity() {
                 animateTopVis(1f, 300)
                 syncUi()
                 updateLens()
-                // a lap a valódi oldalba úszik át
-                hero.animate().alpha(0f).setStartDelay(if (cancelled) 0L else 60L).setDuration(220)
-                    .setInterpolator(DecelerateInterpolator())
-                    .withEndAction {
-                        hero.visibility = View.GONE
-                        hero.alpha = 1f
-                    }.start()
+                // a lap a valódi oldalba úszik át, amint az kirajzolódott
+                whenPageDrawn(tab, 1500L) { fadeOutHero() }
             }
         })
         overviewAnim = anim
         anim.start()
+    }
+
+    /** Ennek változása megszakítja a "repülő" kép függőben lévő eltüntetését. */
+    private var heroHold = 0
+
+    /**
+     * Akkor hívja [cb]-t, amikor a lap tartalma már kirajzolódott (a WebView jelzi), és ha éppen
+     * töltődik, legalább a nagyja betöltött. Legfeljebb [maxMs] ideig vár.
+     */
+    private fun whenPageDrawn(tab: Tab, maxMs: Long, cb: () -> Unit) {
+        val token = ++heroHold
+        val start = android.os.SystemClock.uptimeMillis()
+        var drawn = false
+        try {
+            tab.webView.postVisualStateCallback(token.toLong(), object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    drawn = true
+                }
+            })
+        } catch (e: Throwable) {
+            drawn = true
+        }
+        val check = object : Runnable {
+            override fun run() {
+                if (token != heroHold) return
+                val ready = drawn && (!tab.loading || tab.progress >= 60)
+                if (ready || android.os.SystemClock.uptimeMillis() - start > maxMs) {
+                    // még egy képkocka, hogy a kirajzolt tartalom biztosan a képernyőn legyen
+                    handler.postDelayed({ if (token == heroHold) cb() }, 34L)
+                } else {
+                    handler.postDelayed(this, 40L)
+                }
+            }
+        }
+        handler.post(check)
+    }
+
+    /** A "repülő" kép finoman átúszik a valódi oldalba, majd eltűnik. */
+    private fun fadeOutHero() {
+        if (hero.visibility != View.VISIBLE) return
+        hero.animate().cancel()
+        hero.animate().alpha(0f).setDuration(180)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                hero.visibility = View.GONE
+                hero.alpha = 1f
+            }.start()
     }
 
     /** A keresősáv a helyén kibontakozik: elhalványulásból, kicsit kisebbről, enyhe rugózással. */
@@ -1971,12 +2028,17 @@ class MainActivity : AppCompatActivity() {
             cardView(tab)?.alpha = 0f
             hero.setup(tab.thumbnail, webRect(), card, screenRadius, dp(22).toFloat(), bgColor)
             hero.progress = if (opening) 0f else 1f
+            heroHold++
             hero.animate().cancel()
             hero.alpha = 1f
             hero.visibility = View.VISIBLE
         } else {
             heroTab = null
             cardView(tab)?.alpha = 1f
+            heroHold++
+            hero.animate().cancel()
+            hero.visibility = View.GONE
+            hero.alpha = 1f
         }
         val anim = if (opening) ValueAnimator.ofFloat(0f, 1f) else ValueAnimator.ofFloat(1f, 0f)
         // hosszabb, lágyan lassuló mozgás (nem "csapódik" a helyére)
@@ -2011,13 +2073,15 @@ class MainActivity : AppCompatActivity() {
                     // a kép már pontosan a valódi oldal helyén van: a lapváltó finoman elhalványul
                     // alóla, majd a kép is eltűnik (a mögötte lévő oldal ugyanaz)
                     overview.animate().cancel()
+                    // A kép addig marad a helyén, amíg a valódi oldal ki nem rajzolódott (különben
+                    // hosszabb szünet után egy pillanatra fekete / üres képernyő látszana).
                     overview.animate().alpha(0f).setDuration(170)
                         .setUpdateListener { updateLens() }
                         .withEndAction {
-                            hero.visibility = View.GONE
                             heroTab = null
                             cardView(tab)?.alpha = 1f
                             onEnd()
+                            whenPageDrawn(tab, 2500L) { fadeOutHero() }
                         }.start()
                     return
                 }
@@ -2086,6 +2150,10 @@ class MainActivity : AppCompatActivity() {
         barLeft.setOnClickListener {
             if (barOverview) {
                 openNewTab(null, focusField = false, capture = false)
+            } else if (docked) {
+                // rögzített sáv: kezdőlap gomb
+                activeTab?.stayInBrowser = true
+                activeWebView?.loadUrl(homeUrl())
             } else {
                 activeWebView?.let { if (it.canGoBack()) it.goBack() }
             }
@@ -2467,29 +2535,109 @@ class MainActivity : AppCompatActivity() {
         val out = ArrayList<SuggestItem>()
         when (searchTab) {
             1 -> for (b in BookmarkStore.list(q)) {
-                out.add(SuggestItem(b.title.ifBlank { Urls.host(b.url) }, Urls.host(b.url), b.url, R.drawable.ic_bookmark))
+                out.add(SuggestItem(b.title.ifBlank { Urls.host(b.url) }, b.url, b.url, R.drawable.ic_bookmark))
             }
             2 -> for (e in HistoryStore.list(q, 120)) {
                 val host = Urls.host(e.url)
-                out.add(SuggestItem(e.title.ifBlank { host }, host, e.url, R.drawable.ic_history))
+                out.add(SuggestItem(e.title.ifBlank { host }, e.url, e.url, R.drawable.ic_history))
             }
             else -> {
-                val hist = if (q.isEmpty()) HistoryStore.recent(8) else HistoryStore.search(q, 3)
-                for (e in hist) {
-                    val host = Urls.host(e.url)
-                    out.add(SuggestItem(e.title.ifBlank { host }, host, e.url, R.drawable.ic_history))
-                }
-                if (q.isNotEmpty()) {
-                    for (b in BookmarkStore.list(q).take(2)) {
-                        if (out.none { it.url == b.url }) {
-                            out.add(SuggestItem(b.title.ifBlank { Urls.host(b.url) }, Urls.host(b.url), b.url, R.drawable.ic_bookmark))
+                // Firefox-szerű: felül a keresőmotor javaslatai, alatta a weboldal-ajánlatok
+                if (q.isEmpty()) {
+                    val recent = HistoryStore.recent(10)
+                    if (recent.isNotEmpty()) out.add(SuggestItem(L.t("Legutóbb megnyitott"), null, null, 0, kind = 0))
+                    for (e in recent) {
+                        val host = Urls.host(e.url)
+                        out.add(SuggestItem(e.title.ifBlank { host }, e.url, e.url, R.drawable.ic_history))
+                    }
+                } else {
+                    out.add(SuggestItem(engineTitle(), null, null, 0, kind = 0))
+                    out.add(SuggestItem(q, null, null, R.drawable.ic_search, kind = 1))
+                    for (text in onlineItems) {
+                        if (!text.equals(q, ignoreCase = true)) {
+                            out.add(SuggestItem(text, null, null, R.drawable.ic_search, kind = 1))
+                        }
+                        if (out.size >= 7) break
+                    }
+                    val sites = ArrayList<SuggestItem>()
+                    // nyitott lapok: koppintásra arra a lapra váltunk
+                    for (t in tabs) {
+                        if (t === activeTab || Urls.isStart(t.url)) continue
+                        if (t.title.contains(q, true) || t.url.contains(q, true)) {
+                            sites.add(SuggestItem(t.title.ifBlank { Urls.host(t.url) }, L.t("Váltás erre a lapra"), t.url, 0, tab = t))
+                        }
+                        if (sites.size >= 3) break
+                    }
+                    for (b in BookmarkStore.list(q).take(3)) {
+                        if (sites.none { it.url == b.url }) {
+                            sites.add(SuggestItem(b.title.ifBlank { Urls.host(b.url) }, b.url, b.url, R.drawable.ic_bookmark))
                         }
                     }
-                    for (text in onlineItems) out.add(SuggestItem(text, null, null, R.drawable.ic_search))
+                    for (e in HistoryStore.search(q, 6)) {
+                        if (sites.none { it.url == e.url } && sites.size < 8) {
+                            sites.add(SuggestItem(e.title.ifBlank { Urls.host(e.url) }, e.url, e.url, R.drawable.ic_history))
+                        }
+                    }
+                    if (sites.isNotEmpty()) {
+                        out.add(SuggestItem(L.t("Javaslatok"), null, null, 0, kind = 0))
+                        out.addAll(sites)
+                    }
                 }
             }
         }
         return out
+    }
+
+    /** A keresőmotor neve a javaslatok fölött (pl. "Google keresés" / "Google Search"). */
+    private fun engineTitle(): String {
+        val engine = prefs.getString("search_engine", DEFAULT_SEARCH) ?: DEFAULT_SEARCH
+        val host = Uri.parse(engine).host.orEmpty()
+        val name = when {
+            "google" in host -> "Google"
+            "bing" in host -> "Bing"
+            "duckduckgo" in host -> "DuckDuckGo"
+            "brave" in host -> "Brave"
+            "startpage" in host -> "Startpage"
+            else -> host.removePrefix("www.").substringBefore('.').replaceFirstChar { it.uppercase() }
+        }
+        return if (L.en) "$name Search" else "$name keresés"
+    }
+
+    /** Címsor a kereső felület szakaszai fölött. */
+    private fun makeHeaderRow(): TextView {
+        val tv = TextView(this)
+        tv.textSize = 14f
+        tv.setPadding(dp(22), dp(16), dp(22), dp(6))
+        tv.tag = "h"
+        return tv
+    }
+
+    /** Keresési javaslat: nagyító, a szöveg, jobbra a "mezőbe írás" nyíl (mint a Firefoxban). */
+    private fun makeQueryRow(): LinearLayout {
+        val row = LinearLayout(this)
+        row.tag = "q"
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(22), 0, dp(8), 0)
+        val ta = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+        row.background = ta.getDrawable(0)
+        ta.recycle()
+        val icon = ImageView(this)
+        row.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
+        val title = TextView(this)
+        title.textSize = 16.5f
+        title.maxLines = 1
+        title.ellipsize = TextUtils.TruncateAt.END
+        val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        lp.marginStart = dp(18)
+        row.addView(title, lp)
+        val fill = ImageButton(this)
+        fill.setImageResource(R.drawable.ic_fill)
+        fill.background = null
+        fill.setPadding(dp(12), dp(12), dp(12), dp(12))
+        fill.scaleType = ImageView.ScaleType.FIT_CENTER
+        row.addView(fill, LinearLayout.LayoutParams(dp(46), dp(46)))
+        return row
     }
 
     private fun makeSearchRow(): LinearLayout {
@@ -2501,8 +2649,16 @@ class MainActivity : AppCompatActivity() {
         row.background = ta.getDrawable(0)
         ta.recycle()
 
+        row.tag = "s"
         val icon = ImageView(this)
-        row.addView(icon, LinearLayout.LayoutParams(dp(20), dp(20)))
+        icon.scaleType = ImageView.ScaleType.FIT_CENTER
+        icon.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(v: View, o: android.graphics.Outline) {
+                o.setRoundRect(0, 0, v.width, v.height, dp(6).toFloat())
+            }
+        }
+        icon.clipToOutline = true
+        row.addView(icon, LinearLayout.LayoutParams(dp(26), dp(26)))
 
         val texts = LinearLayout(this)
         texts.orientation = LinearLayout.VERTICAL
@@ -2512,7 +2668,7 @@ class MainActivity : AppCompatActivity() {
         title.ellipsize = TextUtils.TruncateAt.END
         texts.addView(title)
         val sub = TextView(this)
-        sub.textSize = 12f
+        sub.textSize = 12.5f
         sub.maxLines = 1
         sub.ellipsize = TextUtils.TruncateAt.END
         texts.addView(sub)
@@ -2550,48 +2706,117 @@ class MainActivity : AppCompatActivity() {
             return
         }
         // ha az előbb a tájékoztató szöveg volt itt, azt levesszük
-        if (searchList.childCount > 0 && searchList.getChildAt(0) !is LinearLayout) searchList.removeAllViews()
+        if (searchList.childCount > 0 && searchList.getChildAt(0).tag == null) searchList.removeAllViews()
 
         var animated = 0
         for ((i, item) in items.withIndex()) {
-            val key = item.icon.toString() + "|" + item.text + "|" + item.url
+            val key = item.kind.toString() + "|" + item.icon + "|" + item.text + "|" + item.url
             keys.add(key)
-            var row = searchList.getChildAt(i) as? LinearLayout
-            if (row == null) {
-                row = makeSearchRow()
-                searchList.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
+            val type = when (item.kind) {
+                0 -> "h"
+                1 -> "q"
+                else -> "s"
             }
-            val icon = row.getChildAt(0) as ImageView
-            icon.setImageResource(item.icon)
-            icon.imageTintList = ColorStateList.valueOf(dim)
-            val texts = row.getChildAt(1) as LinearLayout
-            val title = texts.getChildAt(0) as TextView
-            title.text = item.text
-            title.setTextColor(text)
-            val sub = texts.getChildAt(1) as TextView
-            sub.text = item.sub.orEmpty()
-            sub.setTextColor(dim)
-            sub.visibility = if (item.sub != null) View.VISIBLE else View.GONE
-            row.setOnClickListener {
-                // mentett oldal: maga az oldal; javaslat: keresés a szövegre
-                activeTab?.stayInBrowser = true
-                activeWebView?.loadUrl(item.url ?: resolveInput(item.text))
-                releaseFocus()
-            }
-            val url = item.url
-            if (searchTab == 1 && url != null) {
-                row.setOnLongClickListener {
-                    BookmarkStore.remove(applicationContext, url)
-                    Toast.makeText(this, L.t("Könyvjelző törölve"), Toast.LENGTH_SHORT).show()
-                    renderSearch()
-                    true
+            var row: View? = searchList.getChildAt(i)
+            if (row == null || row.tag != type) {
+                if (row != null) searchList.removeViewAt(i)
+                row = when (type) {
+                    "h" -> makeHeaderRow()
+                    "q" -> makeQueryRow()
+                    else -> makeSearchRow()
                 }
-            } else {
-                row.setOnLongClickListener(null)
-                row.isLongClickable = false
+                val h = when (type) {
+                    "h" -> ViewGroup.LayoutParams.WRAP_CONTENT
+                    "q" -> dp(52)
+                    else -> dp(62)
+                }
+                searchList.addView(row, i, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h))
+            }
+            when (type) {
+                "h" -> {
+                    val tv = row as TextView
+                    tv.text = item.text
+                    tv.setTextColor(dim)
+                }
+                "q" -> {
+                    val r = row as LinearLayout
+                    val icon = r.getChildAt(0) as ImageView
+                    icon.setImageResource(R.drawable.ic_search)
+                    icon.imageTintList = ColorStateList.valueOf(dim)
+                    val title = r.getChildAt(1) as TextView
+                    title.text = item.text
+                    title.setTextColor(text)
+                    val fill = r.getChildAt(2) as ImageButton
+                    fill.imageTintList = ColorStateList.valueOf(dim)
+                    fill.setOnClickListener {
+                        // a javaslat a mezőbe kerül, lehet tovább gépelni
+                        haptic()
+                        urlField.setText(item.text + " ")
+                        urlField.setSelection(urlField.text.length)
+                    }
+                    r.setOnClickListener {
+                        activeTab?.stayInBrowser = true
+                        activeWebView?.loadUrl(resolveInput(item.text))
+                        releaseFocus()
+                    }
+                }
+                else -> {
+                    val r = row as LinearLayout
+                    val icon = r.getChildAt(0) as ImageView
+                    val texts = r.getChildAt(1) as LinearLayout
+                    val title = texts.getChildAt(0) as TextView
+                    title.text = item.text
+                    title.setTextColor(text)
+                    val sub = texts.getChildAt(1) as TextView
+                    sub.text = item.sub.orEmpty()
+                    sub.setTextColor(dim)
+                    sub.visibility = if (item.sub != null) View.VISIBLE else View.GONE
+                    // színes webhely-ikon; amíg nem tölt be (vagy ha nincs), egy földgömb
+                    val host = Uri.parse(item.url.orEmpty()).host.orEmpty()
+                    val cachedIcon = Favicons.cached(host)
+                    if (cachedIcon != null) {
+                        icon.imageTintList = null
+                        icon.setImageBitmap(cachedIcon)
+                    } else {
+                        icon.setImageResource(R.drawable.ic_globe)
+                        icon.imageTintList = ColorStateList.valueOf(dim)
+                        icon.tag = host
+                        Favicons.load(host) { bmp ->
+                            if (bmp != null && icon.tag == host) {
+                                icon.imageTintList = null
+                                icon.setImageBitmap(bmp)
+                                icon.alpha = 0f
+                                icon.animate().alpha(1f).setDuration(160).start()
+                            }
+                        }
+                    }
+                    val switchTo = item.tab
+                    r.setOnClickListener {
+                        if (switchTo != null && switchTo in tabs) {
+                            releaseFocus()
+                            selectTab(switchTo)
+                        } else {
+                            activeTab?.stayInBrowser = true
+                            activeWebView?.loadUrl(item.url ?: resolveInput(item.text))
+                            releaseFocus()
+                        }
+                    }
+                    val url = item.url
+                    if (searchTab == 1 && url != null) {
+                        r.setOnLongClickListener {
+                            BookmarkStore.remove(applicationContext, url)
+                            Toast.makeText(this, L.t("Könyvjelző törölve"), Toast.LENGTH_SHORT).show()
+                            renderSearch()
+                            true
+                        }
+                    } else {
+                        r.setOnLongClickListener(null)
+                        r.isLongClickable = false
+                    }
+                }
             }
 
-            if (searchKeys.getOrNull(i) != key && animated < 12) {
+            if (searchKeys.getOrNull(i) != key && animated < 14) {
                 row.animate().cancel()
                 row.alpha = 0f
                 row.translationY = dp(14).toFloat()
@@ -2677,15 +2902,20 @@ class MainActivity : AppCompatActivity() {
     private fun applyDockLayout() {
         if (!::dockMenuBtn.isInitialized) return
         if (docked) {
-            barLeft.visibility = if (barOverview) View.VISIBLE else View.GONE
+            // bal szélen kezdőlap gomb (a lapváltóban helyette az új lap gomb)
+            barLeft.visibility = View.VISIBLE
+            iconBack.setImageResource(R.drawable.ic_home)
+            (barLeft.layoutParams as LinearLayout.LayoutParams).width = dp(44)
             btnMenu.visibility = View.GONE
             btnReload.visibility = if (urlField.hasFocus()) View.VISIBLE else View.GONE
             dockMenuBtn.visibility = if (barOverview) View.INVISIBLE else View.VISIBLE
-            (barCenter.layoutParams as LinearLayout.LayoutParams).marginStart = if (barOverview) dp(8) else dp(4)
+            (barCenter.layoutParams as LinearLayout.LayoutParams).marginStart = dp(2)
             browseRow.setPadding(dp(14), 0, dp(6), 0)
             if (!urlField.hasFocus()) urlField.gravity = Gravity.CENTER_VERTICAL or Gravity.START
         } else {
             barLeft.visibility = View.VISIBLE
+            iconBack.setImageResource(R.drawable.ic_back)
+            (barLeft.layoutParams as LinearLayout.LayoutParams).width = dp(54)
             btnMenu.visibility = View.VISIBLE
             btnReload.visibility = View.VISIBLE
             dockMenuBtn.visibility = View.GONE

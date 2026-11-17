@@ -36,6 +36,9 @@ class LensEffect(private val target: View) {
     private var topBlur = 0f
     private var topMode = 0f
     private var contentTop = 0f
+    /** Domború (3D) üveg: a fény- és árnyékhatás erőssége (0 = ki), és a peremi nagyítás (0 = nincs). */
+    private var convex = 0f
+    private var convexRefr = 0f
     /** Az állapotsor mögötti térköz egyszínű kitöltése (alfa 0 = az első sor nyújtása). */
     private val padColor = floatArrayOf(0f, 0f, 0f, 0f)
 
@@ -109,6 +112,21 @@ class LensEffect(private val target: View) {
     fun clearSlot(index: Int) = setSlot(index, 0f, 0f, 0f, 0f, 0f, 0f)
 
     /**
+     * Domború, vastag üveg minden felületen: [amount] a fénycsillanás / peremárnyék erőssége
+     * (0 = kikapcsolva, 1 = teljes), [refraction] a szélek felé erősödő nagyítás (0..1; matt
+     * üvegnél 0, mert ott nincs fénytörés).
+     */
+    fun setConvex(amount: Float, refraction: Float) {
+        val a = amount.coerceIn(0f, 1f)
+        val r = refraction.coerceIn(0f, 1f)
+        if (convex != a || convexRefr != r) {
+            convex = a
+            convexRefr = r
+            dirty = true
+        }
+    }
+
+    /**
      * Felső elmosás. [height] az állapotsor magassága (0 = kikapcsolva), alatta [extent] pixelen
      * át halványul el. [tint] a ráfestett szín (az alfa az erőssége). [contentTopPx] fölött nincs
      * tartalom, onnan nem veszünk mintát. [flow] = igaz: a tartalom valóban átúszik az állapotsor
@@ -177,6 +195,8 @@ class LensEffect(private val target: View) {
         shader.setFloatUniform("padColor", padColor)
         shader.setFloatUniform("rimColor", rim)
         shader.setFloatUniform("rimWidth", rimWidth)
+        shader.setFloatUniform("convex", convex)
+        shader.setFloatUniform("convexRefr", convexRefr)
         val main = RenderEffect.createRuntimeShaderEffect(shader, "content")
         if (flowH > 0f && flowBlur >= 1f) {
             val mask = flowMask ?: RuntimeShader(MASK_SRC).also { flowMask = it }
@@ -270,6 +290,8 @@ uniform float contentTop;
 uniform vec4 padColor;
 uniform vec4 rimColor;
 uniform float rimWidth;
+uniform float convex;
+uniform float convexRefr;
 
 float sdRound(vec2 p, vec2 hs, float r) {
     vec2 q = abs(p) - hs + vec2(r);
@@ -325,8 +347,17 @@ vec4 glass(vec2 c, vec4 rect, float radius, float d, float blur, float strength)
     float t = clamp(1.0 + d / rh, 0.0, 1.0);
     float k = (1.0 - sqrt(1.0 - t * t)) * refrAmount;
     vec2 off = n * k;
+    // Domború üveg: a felület egy lekerekített "párna"; a pereme felé egyre meredekebb.
+    // u = 0 a lapos közepén, 1 a peremen; tilt = a felület dőlése (a normális vízszintes része).
+    float bev = max(min(radius, min(hs.x, hs.y)), 1.0);
+    float u = clamp(1.0 + d / bev, 0.0, 1.0);
+    float tilt = u * u;
+    if (convex > 0.0 && convexRefr > 0.0) {
+        // vastag lencse: a szélek felé erősebben húzza befelé a képet, középen enyhén nagyít
+        off += (n * (tilt * u) * (bev * 0.32) + p * 0.045) * convexRefr;
+    }
     vec4 col = blurAt(c - off, blur);
-    if (dispersion > 0.0 && k > 0.0) {
+    if (dispersion > 0.0 && dot(off, off) > 0.0) {
         col.r = blurAt(c - off * (1.0 + dispersion), blur).r;
         col.b = blurAt(c - off * (1.0 - dispersion), blur).b;
     }
@@ -335,6 +366,29 @@ vec4 glass(vec2 c, vec4 rect, float radius, float d, float blur, float strength)
         float e = clamp(1.0 + d / max(rimWidth, 0.5), 0.0, 1.0);
         float a = e * e * rimColor.a;
         col.rgb = col.rgb * (1.0 - a) + rimColor.rgb * a;
+    }
+    if (convex > 0.0) {
+        // fény balról fölülről: a bal felső belső peremen csillanás, a jobb alsón enyhe árnyék
+        float facing = dot(n, vec2(-0.55, -0.835));
+        float lit = max(facing, 0.0);
+        float away = max(-facing, 0.0);
+        float u2 = u * u;
+        float edge6 = u2 * u2 * u2;
+        // lágy fénycsík a megvilágított belső peremen
+        float spec = edge6 * lit * lit * 0.42;
+        // halvány fényfolt a felület felső részén (a "kupola" teteje veri vissza a fényt)
+        float yN = clamp((c.y - rect.y) / max(rect.w - rect.y, 1.0), 0.0, 1.0);
+        float sheen = (1.0 - smoothstep(0.0, 0.55, yN)) * (1.0 - u) * 0.07;
+        // belső árnyék a jobb alsó perem felé (az üveg vastagsága)
+        float shade = u2 * u * away * 0.16;
+        col.rgb = col.rgb * (1.0 - shade * convex);
+        col.rgb = col.rgb + (vec3(1.0) - col.rgb) * ((spec + sheen) * convex);
+        // vékony, fényes perem (a szemközti, jobb alsó oldalon is átüt a fény)
+        float rw = clamp(bev * 0.07, 1.0, 3.2);
+        float rimE = 1.0 - smoothstep(0.0, rw, -d);
+        float rimA = rimE * (0.16 + 0.42 * lit + 0.20 * away) * convex;
+        col.rgb = col.rgb + (vec3(1.0) - col.rgb) * rimA;
+        col.rgb = clamp(col.rgb, 0.0, 1.0);
     }
     col.a = 1.0;
     if (strength < 1.0) {

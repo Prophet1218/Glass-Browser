@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -39,6 +40,7 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreference
+import androidx.recyclerview.widget.RecyclerView
 
 /**
  * A választható alkalmazásikonok. Mindegyikhez tartozik egy "álnév" (activity-alias) a
@@ -111,6 +113,7 @@ class SettingsActivity : AppCompatActivity() {
         ThemeHelper.apply(PreferenceManager.getDefaultSharedPreferences(this))
         L.init(this)
         super.onCreate(savedInstanceState)
+        applyDialogStyle(PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", true))
         WindowCompat.setDecorFitsSystemWindows(window, false)
         night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -146,6 +149,11 @@ class SettingsActivity : AppCompatActivity() {
         setResult(RESULT_OK, result)
     }
 
+    /** A felugró ablakok üveglapja domború (3D) vagy sima, a kapcsoló szerint. */
+    fun applyDialogStyle(convex: Boolean) {
+        theme.applyStyle(if (convex) R.style.GlassDialogs_Convex else R.style.GlassDialogs_Flat, true)
+    }
+
     /**
      * A csúszka lenyomott kapszulája: a helyén a böngésző keresősávjával azonos shader rajzol
      * üveget (fénytöréssel), amíg húzod. [rect] az ablak koordinátáiban; null = vége.
@@ -168,6 +176,9 @@ class SettingsActivity : AppCompatActivity() {
                 )
                 lens = it
             }
+            // domború (3D) üveg a csúszka kapszuláján is (a beállítás azonnal érvényes)
+            val convexOn = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", true)
+            l.setConvex(if (convexOn) 1f else 0f, if (convexOn) 1f else 0f)
             settingsRoot.getLocationInWindow(rootLoc)
             l.setSlot(
                 0,
@@ -265,6 +276,12 @@ class SettingsFragment : PreferenceFragmentCompat() {
             true
         }
 
+        // domború üveg: a beállítások saját felugró ablakai is azonnal követik
+        findPreference<SwitchPreference>("glass_convex")?.setOnPreferenceChangeListener { _, v ->
+            act.applyDialogStyle(v as? Boolean ?: true)
+            true
+        }
+
         updateIconSummary()
         findPreference<Preference>("app_icon")?.setOnPreferenceClickListener {
             showIconChooser()
@@ -284,6 +301,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
             findPreference<SeekBarPreference>("glass_dispersion")?.value = 0
             findPreference<SeekBarPreference>("glass_dark")?.value = 0
             findPreference<SwitchPreference>("glass_rim")?.isChecked = true
+            findPreference<SwitchPreference>("glass_convex")?.isChecked = true
+            act.applyDialogStyle(true)
             Toast.makeText(requireContext(), L.t("Üvegbeállítások visszaállítva"), Toast.LENGTH_SHORT).show()
             true
         }
@@ -391,6 +410,43 @@ class SettingsFragment : PreferenceFragmentCompat() {
         // Átkapcsoláskor a sor ne cserélődjön ki áttűnéssel: így a kapcsoló kapszulája ténylegesen
         // átcsúszik a másik oldalra.
         listView.itemAnimator = null
+        // görgetéskor a lista teteje és alja üveg alá csúszva elmosódik
+        if (Build.VERSION.SDK_INT >= 33) setupEdgeBlur()
+    }
+
+    /**
+     * A lista felső és alsó szélén a tartalom elmosódik és elhalványul, de csak ha ott valóban van
+     * még tartalom (felül: már legörgettél; alul: van még lejjebb). Az erősség a görgetéssel együtt,
+     * fokozatosan nő, így nem ugrik be.
+     */
+    @RequiresApi(33)
+    private fun setupEdgeBlur() {
+        val list = listView ?: return
+        val d = resources.displayMetrics.density
+        val eb = try {
+            EdgeBlur(list)
+        } catch (e: Throwable) {
+            return
+        }
+        val ramp = 28f * d
+        fun refresh() {
+            try {
+                val off = list.computeVerticalScrollOffset()
+                val below = list.computeVerticalScrollRange() - list.computeVerticalScrollExtent() - off
+                val top = if (list.canScrollVertically(-1)) (off / ramp).coerceIn(0.15f, 1f) else 0f
+                val bottom = if (list.canScrollVertically(1)) (below / ramp).coerceIn(0.15f, 1f) else 0f
+                eb.update(top, bottom, 34f * d, 9f * d)
+            } catch (e: Throwable) {
+                eb.clear()
+            }
+        }
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                refresh()
+            }
+        })
+        list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> refresh() }
+        list.post { refresh() }
     }
 
     private fun openInBrowser(key: String, url: String) {

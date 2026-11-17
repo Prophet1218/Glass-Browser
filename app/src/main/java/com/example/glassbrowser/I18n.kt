@@ -289,6 +289,7 @@ object L {
         "Kirepülés elfordulva" to "Fly out with a twist",
         "Összezsugorodás" to "Shrink",
         "Elhalványulás elmosódva" to "Blur and fade",
+        "Elhalványulás oldalra" to "Fade to the side",
         "Kilökés felfelé" to "Toss up",
         "Összecsukódás" to "Fold away"
     )

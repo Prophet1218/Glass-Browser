@@ -39,16 +39,8 @@
         <item>clear</item>
     </string-array>
 
-    <string-array name="tab_layout_names">
-        <item>Rács (2 oszlop)</item>
-        <item>Halom (egymásra rakott lapok)</item>
-    </string-array>
-    <string-array name="tab_layout_values">
-        <item>grid</item>
-        <item>stack</item>
-    </string-array>
-
     <string-array name="close_anim_names">
+        <item>Elhalványulás oldalra</item>
         <item>Kirepülés elfordulva</item>
         <item>Összezsugorodás</item>
         <item>Elhalványulás elmosódva</item>
@@ -56,6 +48,7 @@
         <item>Összecsukódás</item>
     </string-array>
     <string-array name="close_anim_values">
+        <item>fade</item>
         <item>fly</item>
         <item>shrink</item>
         <item>blur</item>

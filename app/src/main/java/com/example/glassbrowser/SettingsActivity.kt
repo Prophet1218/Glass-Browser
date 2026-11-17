@@ -588,6 +588,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     override fun onResume() {
         super.onResume()
+        HighRefresh.apply(this)
         updateGoogleStatus()
     }
 

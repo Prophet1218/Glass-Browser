@@ -41,16 +41,7 @@
             app:useSimpleSummaryProvider="true" />
 
         <ListPreference
-            android:defaultValue="grid"
-            android:entries="@array/tab_layout_names"
-            android:entryValues="@array/tab_layout_values"
-            android:key="tab_layout"
-            android:title="Lapváltó elrendezése"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-
-        <ListPreference
-            android:defaultValue="fly"
+            android:defaultValue="fade"
             android:entries="@array/close_anim_names"
             android:entryValues="@array/close_anim_values"
             android:key="close_anim"

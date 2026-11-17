@@ -1369,6 +1369,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun createTab(): Tab {
         val wv = GlassWebView(this)
+        wv.isVerticalScrollBarEnabled = false
+        wv.isHorizontalScrollBarEnabled = false
+        HighRefresh.view(wv)
         // Privát lap: külön WebView-profil (saját sütik, tárhely, gyorsítótár), ha a telefon
         // WebView-ja tudja (Android System WebView 110+).
         if (privateMode && privateProfileSupported()) {
@@ -2135,12 +2138,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private val stackRect = RectF()
 
     /** A beállított bezárási animáció ("fly", "shrink", "blur", "toss", "fold"). */
-    private fun closeAnimStyle(): String = prefs.getString("close_anim", "fly") ?: "fly"
+    private fun closeAnimStyle(): String = prefs.getString("close_anim", "fade") ?: "fade"
 
     /** A beállított elrendezés (rács / halom) alkalmazása, újraindítás nélkül. */
     private fun applyTabLayout() {
         if (!::tabAdapter.isInitialized) return
-        val stack = prefs.getString("tab_layout", "grid") == "stack"
+        val stack = false // only the grid layout is kept
         if (stack == stackLayout) return
         stackLayout = stack
         fxViews.clear()
@@ -2319,6 +2322,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         var alpha = (1f - 1.3f * p).coerceIn(0f, 1f)
         var blur = 0f
         when (style) {
+            "fade" -> {
+                // slides to the side with the finger and fades out, no tilt
+                tx = dX
+                sc = 1f - 0.04f * p
+                alpha = (1f - 1.4f * p).coerceIn(0f, 1f)
+            }
             "shrink" -> {
                 // a közepe felé zsugorodik és elhalványul
                 tx = dX * 0.25f
@@ -2400,7 +2409,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         val style = closeAnimStyle()
         val w = tabList.width.toFloat().coerceAtLeast(1f)
         val anim = ValueAnimator.ofFloat(0f, 1f)
-        anim.duration = if (style == "fly") 240L else 280L
+        anim.duration = if (style == "fly" || style == "fade") 240L else 280L
         anim.interpolator = android.view.animation.PathInterpolator(0.4f, 0f, 0.8f, 1f)
         anim.addUpdateListener {
             // (ha közben a kártya kigördült és újrahasznosult, már nem mozgatjuk)
@@ -3100,19 +3109,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * A rendszer dönthet másképp (pl. energiatakarékos módban).
      */
     private fun preferHighRefreshRate() {
-        if (Build.VERSION.SDK_INT < 30) return
-        try {
-            val disp = display ?: return
-            val cur = disp.mode
-            val best = disp.supportedModes
-                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
-                .maxByOrNull { it.refreshRate } ?: return
-            val lp = window.attributes
-            lp.preferredDisplayModeId = best.modeId
-            window.attributes = lp
-        } catch (e: Exception) {
-            // marad az alapértelmezett
-        }
+        HighRefresh.apply(this)
+        if (::scene.isInitialized) HighRefresh.view(scene)
     }
 
     /**
@@ -5471,6 +5469,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     override fun onResume() {
         super.onResume()
         activeWebView?.onResume()
+        preferHighRefreshRate()
         applyAllSettings()
         handler.post(ticker)
     }

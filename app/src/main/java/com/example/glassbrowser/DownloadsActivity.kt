@@ -207,6 +207,7 @@ class DownloadsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        HighRefresh.apply(this)
         lastKey = ""
         handler.post(refresher)
     }

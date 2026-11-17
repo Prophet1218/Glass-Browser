@@ -160,6 +160,15 @@
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
 
+        <ListPreference
+            android:defaultValue="system"
+            android:entries="@array/glass_tone_names"
+            android:entryValues="@array/glass_tone_values"
+            android:key="glass_tone"
+            android:title="Üveg árnyalata"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
         <com.example.glassbrowser.HuePreference
             android:defaultValue="210"
             android:key="bar_tint_hue"

@@ -425,7 +425,7 @@ class MainActivity : AppCompatActivity() {
         val plateAlpha = 255
         val plate: Int? = when {
             lensActive -> null
-            night -> Color.argb(plateAlpha, 27, 30, 38)
+            glassDark() -> Color.argb(plateAlpha, 27, 30, 38)
             else -> Color.argb(plateAlpha, 248, 249, 251)
         }
         val rimOn = prefs.getBoolean("glass_rim", true) && mode != "off"
@@ -443,13 +443,18 @@ class MainActivity : AppCompatActivity() {
             it.setOverlay(overlay)
             it.setShade((glassShade * 255f).toInt())
             it.setRim(rimOn)
+            // dér réteg: az üveg a választott árnyalatot kapja (olvasható szöveg minden oldal fölött)
+            it.setFrost(
+                if (!lensActive) Color.TRANSPARENT
+                else if (glassDark()) Color.argb(110, 22, 24, 30) else Color.argb(150, 250, 250, 252)
+            )
         }
         dockSkin.setTint(tintAlpha, plate)
         dockSkin.setOverlay(overlay)
         dockSkin.setShade((glassShade * 255f).toInt())
         dockSkin.setRim(false)
         applyBarStyle()
-        if (!lensActive) applyContentColor(!night)
+        applyContentColor(!glassDark())
 
         tabs.forEach { applyWebTop(it.webView) }
         updateLens()
@@ -694,11 +699,11 @@ class MainActivity : AppCompatActivity() {
             if (searchVis > 0.01f) {
                 // Kereső felület: a fülek sávja mögé görgetett szöveg (és az állapotsor mögötti rész)
                 // elmosódik, lefelé lágyan elhalványuló átmenettel.
-                val bandH = segBar.top + segBar.translationY + segBar.height + 4f * d
+                val bandH = segBar.top + segBar.translationY + segBar.height
                 val tint = if (night) Color.argb((80 * searchVis).toInt(), 14, 16, 22)
                 else Color.argb((110 * searchVis).toInt(), 243, 244, 248)
                 l.setFlow(0f, 0f, 0f, 0)
-                l.setTop(bandH, 30f * d, 16f * d * searchVis, tint, 0f, true)
+                l.setTop(bandH, 22f * d, 16f * d * searchVis, tint, 0f, true, hardEdge = true)
             } else if (topBlurOn && statusTop > 0 && !searchShown && (vis > 0.01f || (flowLayout() && !overviewShown))) {
                 // 0 erősségnél se elmosás, se árnyalat: az oldal tisztán látszik az állapotsor mögött
                 val k = (topStrength / (6f * d)).coerceIn(0f, 1f) * vis
@@ -785,7 +790,7 @@ class MainActivity : AppCompatActivity() {
                 visualRect(tb, tmpRect)
                 l.setSlot(
                     SLOT_SUGGEST, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
-                    20f * d, lensBlur, tb.alpha
+                    tmpRect.height() / 2f, lensBlur, tb.alpha
                 )
             } else {
                 l.clearSlot(SLOT_SUGGEST)
@@ -879,11 +884,10 @@ class MainActivity : AppCompatActivity() {
      * világosra vagy sötétre válthassanak. A WebView-hoz nem nyúl, így a görgetést nem zavarja.
      */
     private fun sampleLuminance() {
-        if (docked && lensActive) {
-            // rögzített sávnál az oldal nem fut a sáv alá: a sáv mögött a háttérszín van
-            applyContentColor(!night)
-            return
-        }
+        // A sáv szövege a választott árnyalathoz igazodik (világos üvegen sötét, sötéten világos),
+        // így minden oldal fölött olvasható, mint a hárompontos menüben.
+        applyContentColor(!glassDark())
+        if (true) return
         if (!lensActive || probeBusy || capturing || barRow.width <= 0) return
         val left = barRow.left.coerceAtLeast(0)
         val right = barRow.right.coerceAtMost(root.width)
@@ -1281,6 +1285,7 @@ class MainActivity : AppCompatActivity() {
                     dy < -6 -> setCollapsed(false)
                 }
                 if (docked && !dockTop) onDockScroll(scrollY, dy)
+                onTranslateScroll(dy)
                 updateTopFade(scrollY)
             }
         }
@@ -3190,7 +3195,7 @@ class MainActivity : AppCompatActivity() {
             if (lang.length !in 2..3 || tab !== activeTab || tab.translated) return@evaluateJavascript
             if (lang == translateTarget()) return@evaluateJavascript
             trFrom = lang
-            showTranslateBar(tab, translating = false, done = false)
+            showTranslateBar(tab, 0)
         }
     }
 
@@ -3203,10 +3208,7 @@ class MainActivity : AppCompatActivity() {
         skin.cornerRadius = radius
         skins.add(skin)
         applyGlassMode()
-        val frost = GradientDrawable()
-        frost.cornerRadius = radius
-        frost.setColor(if (night) Color.argb(90, 20, 22, 28) else Color.argb(120, 255, 255, 255))
-        return android.graphics.drawable.LayerDrawable(arrayOf(skin, frost))
+        return skin
     }
 
     private var copyToast: TextView? = null
@@ -3231,7 +3233,7 @@ class MainActivity : AppCompatActivity() {
             copyToast = t
         }
         tv.text = L.t("Vágólapra másolva")
-        val col = if (night) Color.WHITE else 0xFF1D1F24.toInt()
+        val col = menuTextColor()
         tv.setTextColor(col)
         tv.compoundDrawableTintList = ColorStateList.valueOf(col)
         // a keresősáv fölött jelenik meg
@@ -3264,116 +3266,144 @@ class MainActivity : AppCompatActivity() {
             }.start()
     }
 
+    /** A fordító kapszula állapota: 0 = ajánlat, 1 = fordít, 2 = kész, 3 = hiba. */
+    private var trState = 0
+    /** Igaz, ha a kapszulának látszania kell (görgetéskor csak ideiglenesen úszik ki). */
+    private var trWanted = false
+    private var trScrolledAway = false
+
     private fun ensureTranslateBar(): LinearLayout {
         trBar?.let { return it }
-        val text = if (night) Color.WHITE else 0xFF1D1F24.toInt()
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
-        bar.setPadding(dp(14), dp(8), dp(6), dp(8))
-        // üveg buborék (a többi üvegfelülettel együtt változik, kikapcsolt üvegnél tömör)
-        bar.background = glassBubble(dp(20).toFloat())
+        bar.setPadding(dp(14), 0, dp(4), 0)
+        // teljesen lekerekített üvegkapszula (a többi üvegfelülettel együtt változik)
+        bar.background = glassBubble(dp(100).toFloat())
         bar.isClickable = true
         val icon = ImageView(this)
         icon.setImageResource(R.drawable.ic_m_translate)
         icon.imageTintList = ColorStateList.valueOf(0xFF0A84FF.toInt())
-        bar.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
-        val texts = LinearLayout(this)
-        texts.orientation = LinearLayout.VERTICAL
+        bar.addView(icon, LinearLayout.LayoutParams(dp(18), dp(18)))
         val t = TextView(this)
-        t.textSize = 15f
-        t.setTextColor(text)
-        t.setTypeface(t.typeface, android.graphics.Typeface.BOLD)
-        val sub = TextView(this)
-        sub.textSize = 12.5f
-        sub.setTextColor(ColorUtils.setAlphaComponent(text, 150))
-        texts.addView(t)
-        texts.addView(sub)
-        val tlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        tlp.marginStart = dp(12)
-        bar.addView(texts, tlp)
+        t.textSize = 14f
+        t.maxLines = 1
+        t.ellipsize = TextUtils.TruncateAt.END
+        val tlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        tlp.marginStart = dp(8)
+        bar.addView(t, tlp)
         val action = TextView(this)
-        action.textSize = 15f
+        action.textSize = 14f
         action.setTextColor(0xFF0A84FF.toInt())
         action.setTypeface(action.typeface, android.graphics.Typeface.BOLD)
-        action.setPadding(dp(12), dp(10), dp(12), dp(10))
+        action.setPadding(dp(12), dp(8), dp(8), dp(8))
         bar.addView(action)
         val close = ImageButton(this)
         close.setImageResource(R.drawable.ic_close)
         close.background = null
-        close.imageTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(text, 160))
-        close.setPadding(dp(10), dp(10), dp(10), dp(10))
+        close.setPadding(dp(9), dp(9), dp(9), dp(9))
         close.scaleType = ImageView.ScaleType.FIT_CENTER
         close.setOnClickListener {
             trTab?.let { trDismissed.add(Urls.host(it.url)) }
             hideTranslateBar()
         }
-        bar.addView(close, LinearLayout.LayoutParams(dp(40), dp(40)))
-        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.gravity = Gravity.TOP
-        lp.leftMargin = dp(10)
-        lp.rightMargin = dp(10)
+        bar.addView(close, LinearLayout.LayoutParams(dp(34), dp(34)))
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42))
+        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         root.addView(bar, lp)
         bar.visibility = View.GONE
         bar.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateLens() }
         trBar = bar
         trTitle = t
-        trSub = sub
+        trSub = null
         trAction = action
+        trClose = close
         return bar
     }
 
-    private fun showTranslateBar(tab: Tab, translating: Boolean, done: Boolean) {
+    private var trClose: ImageButton? = null
+
+    /** [state]: 0 = ajánlat, 1 = fordít, 2 = kész, 3 = hiba. */
+    private fun showTranslateBar(tab: Tab, state: Int) {
         val bar = ensureTranslateBar()
         trTab = tab
-        val target = translateTarget()
+        trState = state
+        trWanted = true
+        val text = menuTextColor()
+        trTitle?.setTextColor(text)
+        trClose?.imageTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(text, 160))
+        val target = langName(translateTarget())
         val from = if (trFrom.isNotEmpty()) langName(trFrom) else ""
-        trSub?.text = if (from.isNotEmpty()) "$from → ${langName(target)}" else "→ ${langName(target)}"
-        trTitle?.text = when {
-            done -> L.t("Oldal lefordítva")
-            translating -> L.t("Fordítás…")
-            else -> L.t("Lefordítod az oldalt?")
+        trTitle?.text = when (state) {
+            1 -> L.t("Fordítás…")
+            2 -> (if (from.isNotEmpty()) "$from → " else "") + target
+            3 -> L.t("Nem sikerült lefordítani")
+            else -> if (from.isNotEmpty()) "$from → $target" else L.t("Lefordítod az oldalt?")
         }
-        trAction?.text = when {
-            done -> L.t("Visszavonás")
-            translating -> ""
+        trAction?.text = when (state) {
+            1 -> ""
+            2 -> L.t("Eredeti")
+            3 -> L.t("Újra")
             else -> L.t("Fordítás")
         }
+        trAction?.visibility = if (state == 1) View.GONE else View.VISIBLE
         trAction?.setOnClickListener {
             haptic()
-            if (done) undoTranslate() else startTranslate()
+            if (trState == 2) undoTranslate() else startTranslate()
         }
-        (bar.layoutParams as FrameLayout.LayoutParams).topMargin =
-            (if (dockTop) statusTop + dockHeight() else statusTop) + dp(6)
-        bar.requestLayout()
-        if (bar.visibility != View.VISIBLE) {
-            bar.visibility = View.VISIBLE
-            bar.alpha = 0f
-            bar.translationY = -dp(16).toFloat()
-            bar.scaleX = 0.92f
-            bar.scaleY = 0.92f
-            bar.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(320)
-                .setInterpolator(OvershootInterpolator(1.3f))
-                .setUpdateListener { updateLens() }.start()
+        val lp = bar.layoutParams as FrameLayout.LayoutParams
+        lp.topMargin = (if (dockTop) statusTop + dockHeight() else statusTop) + dp(8)
+        bar.layoutParams = lp
+        if (bar.visibility != View.VISIBLE || trScrolledAway) {
+            trScrolledAway = false
+            popTranslateBar(true)
         }
-        bar.removeCallbacks(trAutoHide)
-        // a "lefordítva" sáv pár másodperc múlva magától eltűnik
-        if (done) bar.postDelayed(trAutoHide, 4000L)
     }
 
-    private val trAutoHide = Runnable { hideTranslateBar() }
+    /** Megjelenés / eltűnés: felülről rugózva úszik be, és felfelé úszik ki. */
+    private fun popTranslateBar(show: Boolean, gone: Boolean = false) {
+        val bar = trBar ?: return
+        bar.animate().cancel()
+        if (show) {
+            if (bar.visibility != View.VISIBLE) {
+                bar.visibility = View.VISIBLE
+                bar.alpha = 0f
+                bar.translationY = -dp(20).toFloat()
+                bar.scaleX = 0.85f
+                bar.scaleY = 0.85f
+            }
+            bar.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(360)
+                .setInterpolator(OvershootInterpolator(1.4f))
+                .setUpdateListener { updateLens() }.start()
+        } else {
+            bar.animate().alpha(0f).translationY(-dp(24).toFloat()).scaleX(0.9f).scaleY(0.9f).setDuration(220)
+                .setInterpolator(DecelerateInterpolator())
+                .setUpdateListener { updateLens() }
+                .withEndAction {
+                    if (gone) bar.visibility = View.GONE
+                    updateLens()
+                }.start()
+        }
+    }
+
+    /** Görgetés: lefelé a kapszula kiúszik, a másik irányba visszajön. */
+    private fun onTranslateScroll(dy: Int) {
+        if (!trWanted || trBar == null) return
+        if (dy > 8 && !trScrolledAway) {
+            trScrolledAway = true
+            popTranslateBar(false)
+        } else if (dy < -8 && trScrolledAway) {
+            trScrolledAway = false
+            popTranslateBar(true)
+        }
+    }
 
     private fun hideTranslateBar() {
+        trWanted = false
+        trScrolledAway = false
         val bar = trBar ?: return
-        bar.removeCallbacks(trAutoHide)
         if (bar.visibility != View.VISIBLE) return
-        bar.animate().cancel()
-        bar.animate().alpha(0f).translationY(-dp(12).toFloat()).scaleX(0.94f).scaleY(0.94f).setDuration(200)
-            .setUpdateListener { updateLens() }
-            .withEndAction {
-                bar.visibility = View.GONE
-                updateLens()
-            }.start()
+        popTranslateBar(false, gone = true)
     }
 
     /**
@@ -3387,7 +3417,7 @@ class MainActivity : AppCompatActivity() {
         val url = tab.url
         if (url.isBlank() || Urls.isStart(url) || tab.trPending) return
         val target = translateTarget()
-        showTranslateBar(tab, translating = true, done = false)
+        showTranslateBar(tab, 1)
         tab.trPending = true
         val seq = ++trSeq
         wv.evaluateJavascript(TR_COLLECT_JS) { res ->
@@ -3398,7 +3428,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 null
             }
-            if (texts == null || texts.length() == 0) {
+            if (texts == null || texts.length() == 0 || !tab.trPending) {
                 onTranslateResult(tab, false)
                 return@evaluateJavascript
             }
@@ -3415,8 +3445,9 @@ class MainActivity : AppCompatActivity() {
         var cur = ArrayList<String>()
         var len = 0
         for (k in 0 until texts.length()) {
-            val t = texts.optString(k)
-            if (cur.isNotEmpty() && (len + t.length > 3500 || cur.size >= 120)) {
+            // a szövegen belüli sortörés összezavarná a darabolást
+            val t = texts.optString(k).replace(Regex("\\s+"), " ")
+            if (cur.isNotEmpty() && (len + t.length > 1500 || cur.size >= 60)) {
                 batches.add(start to cur)
                 start = k
                 cur = ArrayList()
@@ -3437,7 +3468,7 @@ class MainActivity : AppCompatActivity() {
                         okCount++
                         if (out.second.isNotEmpty() && trFrom.isEmpty()) {
                             trFrom = out.second
-                            if (tab === activeTab) showTranslateBar(tab, translating = true, done = false)
+                            if (tab === activeTab) showTranslateBar(tab, 1)
                         }
                         tab.webView.evaluateJavascript(
                             "window.__gtApply&&window.__gtApply($from," + JSONArray(out.first).toString() + ");", null
@@ -3452,46 +3483,57 @@ class MainActivity : AppCompatActivity() {
 
     private val trPool = java.util.concurrent.Executors.newFixedThreadPool(3)
 
-    /** Egy részlet fordítása. Visszaadja a fordításokat és a felismert forrásnyelvet. */
+    /**
+     * Egy részlet fordítása. A szövegeket sortöréssel összefűzve egyben küldjük el; ha a válasz
+     * sorai nem egyeznek a részlet elemeivel, kettévágjuk a részletet, és úgy próbáljuk újra.
+     * Visszaadja a fordításokat és a felismert forrásnyelvet.
+     */
     private fun googleTranslate(list: List<String>, target: String): Pair<List<String>, String>? {
-        return try {
-            val url = java.net.URL("https://translate.googleapis.com/translate_a/t?client=gtx&sl=auto&tl=$target&dj=0")
-            val c = url.openConnection() as java.net.HttpURLConnection
-            c.requestMethod = "POST"
-            c.doOutput = true
-            c.connectTimeout = 8000
-            c.readTimeout = 12000
-            c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
-            val body = list.joinToString("&") { "q=" + java.net.URLEncoder.encode(it, "UTF-8") }
-            c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            if (c.responseCode != 200) {
-                c.disconnect()
-                return null
-            }
-            val txt = c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            c.disconnect()
-            val arr = JSONArray(txt)
-            val res = ArrayList<String>(list.size)
-            var lang = ""
-            if (list.size == 1 && arr.length() >= 1 && arr.opt(0) is String) {
-                // egyetlen szövegnél: ["fordítás", "nyelv"]
-                res.add(arr.optString(0))
-                lang = arr.optString(1)
-            } else {
-                for (k in 0 until arr.length()) {
-                    val e = arr.opt(k)
-                    if (e is JSONArray) {
-                        res.add(e.optString(0))
-                        if (lang.isEmpty()) lang = e.optString(1)
-                    } else {
-                        res.add(e?.toString().orEmpty())
-                    }
+        if (list.isEmpty()) return emptyList<String>() to ""
+        val r = gtRequest(list.joinToString("\n"), target) ?: return null
+        val parts = r.first.split("\n")
+        if (parts.size == list.size) return parts.map { it.trim() } to r.second
+        if (list.size == 1) return listOf(r.first.trim()) to r.second
+        val mid = list.size / 2
+        val a = googleTranslate(list.subList(0, mid), target) ?: return null
+        val b = googleTranslate(list.subList(mid, list.size), target) ?: return null
+        return (a.first + b.first) to a.second.ifEmpty { b.second }
+    }
+
+    /** A Google Fordító (a böngészőbővítmények által is használt) végpontja. */
+    private fun gtRequest(text: String, target: String): Pair<String, String>? {
+        val base = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$target&dt=t&dj=1&ie=UTF-8&oe=UTF-8"
+        val q = java.net.URLEncoder.encode(text, "UTF-8")
+        for (post in listOf(false, true)) {
+            try {
+                val c = java.net.URL(if (post) base else "$base&q=$q").openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 8000
+                c.readTimeout = 12000
+                c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
+                if (post) {
+                    c.requestMethod = "POST"
+                    c.doOutput = true
+                    c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+                    c.outputStream.use { it.write(("q=$q").toByteArray(Charsets.UTF_8)) }
                 }
+                if (c.responseCode != 200) {
+                    c.disconnect()
+                    continue
+                }
+                val txt = c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                c.disconnect()
+                val o = JSONObject(txt)
+                val sentences = o.optJSONArray("sentences") ?: continue
+                val sb = StringBuilder()
+                for (k in 0 until sentences.length()) {
+                    sb.append(sentences.optJSONObject(k)?.optString("trans").orEmpty())
+                }
+                return sb.toString() to o.optString("src").substringBefore('-')
+            } catch (e: Exception) {
+                // a másik módszerrel próbáljuk
             }
-            if (res.size != list.size) null else res to lang.substringBefore('-')
-        } catch (e: Exception) {
-            null
         }
+        return null
     }
 
     private fun onTranslateResult(tab: Tab, ok: Boolean) {
@@ -3499,11 +3541,10 @@ class MainActivity : AppCompatActivity() {
         tab.trPending = false
         if (ok) {
             tab.translated = true
-            if (tab === activeTab) showTranslateBar(tab, translating = false, done = true)
+            if (tab === activeTab) showTranslateBar(tab, 2)
         } else if (tab === activeTab) {
-            hideTranslateBar()
-            // tartalék: a Google Fordító lefordított oldala
-            translatePage(tab.url)
+            // nincs újratöltés / átirányítás: újra lehet próbálni
+            showTranslateBar(tab, 3)
         }
     }
 
@@ -3546,7 +3587,14 @@ class MainActivity : AppCompatActivity() {
 
     private var urlCopied = false
 
-    private fun menuTextColor(): Int = if (night) Color.WHITE else 0xFF1D1F24.toInt()
+    private fun menuTextColor(): Int = if (glassDark()) Color.WHITE else 0xFF1D1F24.toInt()
+
+    /** Az üvegfelületek árnyalata: a rendszer módja szerint, vagy kézzel világos / sötét. */
+    private fun glassDark(): Boolean = when (prefs.getString("glass_tone", "system")) {
+        "light" -> false
+        "dark" -> true
+        else -> night
+    }
 
     private fun copyUrl() {
         val url = currentUrl
@@ -3619,10 +3667,7 @@ class MainActivity : AppCompatActivity() {
         menuRow(L.t("Beállítások"), icon = R.drawable.ic_m_settings) { openSettings() }
         // Olvashatóság: az üveg alá enyhe dér kerül, a szöveg a világos / sötét módhoz igazodik
         // (így világos és sötét oldal fölött is mindig látszik).
-        menuPanel.background = if (lensActive) GradientDrawable().apply {
-            cornerRadius = dp(26).toFloat()
-            setColor(if (night) Color.argb(110, 22, 24, 30) else Color.argb(150, 250, 250, 252))
-        } else null
+        menuPanel.background = null
         tintTree(menuItems, menuTextColor())
 
         // a panel a menügomb mellé kerül: lebegő sávnál a középső kapszula bal széle fölé,
@@ -3694,9 +3739,11 @@ class MainActivity : AppCompatActivity() {
             // Üveg űrlap: a tartalom a csempe felé zsugorodik / onnan nő ki. Záráskor a szöveg már
             // az út elején eltűnik, az üveg pedig a csempéhez érve teljesen elhalványul, így nem
             // marad szellemkép és üres folt sem.
-            menuGlassAlpha = if (formClosing) smooth(c / 0.55f) else smooth(c / 0.3f)
-            val a = if (formClosing) smooth((c - 0.5f) / 0.5f) else smooth((c - 0.3f) / 0.55f)
-            val sc = 0.55f + 0.45f * smooth(c)
+            // záráskor a szöveg az elején eltűnik, az üveg pedig még a csempe elérése előtt teljesen
+            // elhalványul: nem marad kis szürke folt, és nem látszik a szöveg összenyomódni
+            menuGlassAlpha = if (formClosing) smooth((c - 0.08f) / 0.5f) else smooth(c / 0.25f)
+            val a = if (formClosing) smooth((c - 0.62f) / 0.38f) else smooth((c - 0.35f) / 0.5f)
+            val sc = 0.8f + 0.2f * smooth(c)
             menuItems.scaleX = sc
             menuItems.scaleY = sc
             for (i in 0 until menuItems.childCount) {
@@ -4018,7 +4065,7 @@ class MainActivity : AppCompatActivity() {
         menuItems.removeAllViews()
         menuItems.setPadding(0, 0, 0, 0)
 
-        val text = if (night) Color.WHITE else 0xFF1D1F24.toInt()
+        val text = menuTextColor()
         val muted = ColorUtils.setAlphaComponent(text, 150)
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
@@ -4028,7 +4075,7 @@ class MainActivity : AppCompatActivity() {
             cornerRadius = dp(26).toFloat()
             val a = if (lensActive) 1f else 2.6f
             setColor(
-                if (night) Color.argb((70 * a).toInt(), 20, 22, 28)
+                if (glassDark()) Color.argb((70 * a).toInt(), 20, 22, 28)
                 else Color.argb((90 * a).toInt().coerceAtMost(255), 255, 255, 255)
             )
         }
@@ -4192,11 +4239,11 @@ class MainActivity : AppCompatActivity() {
         menuItems.pivotX = from.centerX() + loc[0] - formTarget.left
         menuItems.pivotY = from.centerY() + loc[1] - formTarget.top
         val anim = if (opening) ValueAnimator.ofFloat(0f, 1f) else ValueAnimator.ofFloat(1f, 0f)
-        anim.duration = if (opening) 520L else 460L
+        anim.duration = if (opening) 500L else 360L
         anim.interpolator = if (opening) {
             android.view.animation.PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
         } else {
-            android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f)
+            android.view.animation.PathInterpolator(0.3f, 0f, 0.15f, 1f)
         }
         anim.addUpdateListener {
             val f = it.animatedValue as Float

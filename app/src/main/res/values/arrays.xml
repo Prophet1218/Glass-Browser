@@ -26,6 +26,17 @@
         <item>off</item>
     </string-array>
 
+    <string-array name="glass_tone_names">
+        <item>Rendszer szerint (világos / sötét)</item>
+        <item>Világos</item>
+        <item>Sötét</item>
+    </string-array>
+    <string-array name="glass_tone_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+    </string-array>
+
     <string-array name="language_names">
         <item>Magyar</item>
         <item>English</item>

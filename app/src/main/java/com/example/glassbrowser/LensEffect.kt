@@ -105,12 +105,16 @@ class LensEffect(private val target: View) {
      * tartalom, onnan nem veszünk mintát. [flow] = igaz: a tartalom valóban átúszik az állapotsor
      * mögött, és felfelé egyre jobban elmosódik; hamis: elmosott színsáv.
      */
-    fun setTop(height: Float, extent: Float, blurPx: Float, tint: Int, contentTopPx: Float, flow: Boolean) {
+    fun setTop(
+        height: Float, extent: Float, blurPx: Float, tint: Int, contentTopPx: Float, flow: Boolean,
+        hardEdge: Boolean = false
+    ) {
         val changed = set(
             topTint,
             Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f, Color.alpha(tint) / 255f
         )
-        val mode = if (flow) 1f else 0f
+        // 2 = teljes erővel [height]-ig, onnan [extent] alatt halványul el (a kereső felülethez)
+        val mode = if (hardEdge) 2f else if (flow) 1f else 0f
         if (changed || topH != height || topExt != extent || topBlur != blurPx ||
             contentTop != contentTopPx || topMode != mode
         ) {
@@ -338,8 +342,12 @@ half4 main(vec2 c) {
             // átúszó: az állapotsor felső részén teljes erővel, onnan lefelé egyenletesen,
             // fokozatosan gyengül; a teljes szélességben
             // lefelé lágyan, folyamatosan halványul (az eddigi kiterjedésen belül marad)
-            float t = clamp(c.y / max(topH + topExt, 1.0), 0.0, 1.0);
-            w = 1.0 - smoothstep(0.2, 1.0, t);
+            if (topMode > 1.5) {
+                w = 1.0 - smoothstep(topH, topH + topExt, c.y);
+            } else {
+                float t = clamp(c.y / max(topH + topExt, 1.0), 0.0, 1.0);
+                w = 1.0 - smoothstep(0.2, 1.0, t);
+            }
         }
         vec4 col = blurAt(s, topBlur * w);
         if (topMode > 0.5) {

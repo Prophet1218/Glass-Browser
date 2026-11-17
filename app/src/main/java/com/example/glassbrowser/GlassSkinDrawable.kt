@@ -30,6 +30,14 @@ class GlassSkinDrawable(density: Float) : Drawable() {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val overlay = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.TRANSPARENT }
+    private val frost = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.TRANSPARENT }
+
+    /** Dér réteg az üvegen (világos vagy sötét), hogy a szöveg minden oldal fölött olvasható legyen. */
+    fun setFrost(color: Int) {
+        if (frost.color == color) return
+        frost.color = color
+        invalidateSelf()
+    }
     private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.3f * density
@@ -145,6 +153,7 @@ class GlassSkinDrawable(density: Float) : Drawable() {
 
         rect.set(b)
         canvas.drawRoundRect(rect, r, r, fill)
+        if (Color.alpha(frost.color) > 0) canvas.drawRoundRect(rect, r, r, frost)
         if (Color.alpha(overlayColor) > 0) canvas.drawRoundRect(rect, r, r, overlay)
         if (shade.alpha > 0) canvas.drawRoundRect(rect, r, r, shade)
         if (rimOn) {

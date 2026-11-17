@@ -1408,6 +1408,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tab.fixedHeader = false
                 tab.headerColor = 0
                 tab.innerScroll = 0
+                tab.noHeader = false
+                tab.hdrHits = 0
+                tab.maxScroll = 0
                 tab.translated = false
                 tab.trPending = false
                 if (tab === activeTab) {
@@ -2445,7 +2448,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
     private val padRecheck = Runnable {
         padRecheckPending = false
-        activeTab?.let { probePadColor(it, 0L) }
+        activeTab?.let {
+            probePadColor(it, 0L)
+            handler.postDelayed({ probeHeaderConsistency(it) }, 40L)
+        }
         probeStatusBand()
     }
 
@@ -2484,7 +2490,20 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     /** Az állapotsor alatti sor leggyakoribb színe (a fejléc / az oldal tetejének színe). */
-    private fun probeRow(tab: Tab, header: Boolean) {
+    private fun colorClose(a: Int, b: Int): Boolean =
+        kotlin.math.abs(Color.red(a) - Color.red(b)) + kotlin.math.abs(Color.green(a) - Color.green(b)) +
+            kotlin.math.abs(Color.blue(a) - Color.blue(b)) < 36
+
+    /** Görgetés közben: ugyanaz a szín maradt-e az állapotsor alatt (lásd [probeRow]). */
+    private fun probeHeaderConsistency(tab: Tab) {
+        if (!flowLayout() || tab.fixedHeader || tab.noHeader || tab.padColor == 0) return
+        val sc = effScroll(tab)
+        tab.maxScroll = maxOf(tab.maxScroll, sc)
+        if (sc < dp(60) || overviewShown || searchShown || capturing) return
+        probeRow(tab, header = false, consistency = true)
+    }
+
+    private fun probeRow(tab: Tab, header: Boolean, consistency: Boolean = false) {
         run {
             val w = scene.width
             val y = statusTop + dp(2)
@@ -2516,6 +2535,25 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                         Color.rgb(r / n, g / n, b / n)
                     } else {
                         0
+                    }
+                    if (consistency) {
+                        // Képi fejléc-felismerés (bármilyen oldalon, pl. uraharashop.hu): ha görgetés
+                        // után is ugyanaz a szín van közvetlenül az állapotsor alatt, mint betöltéskor,
+                        // akkor ott egy fejléc áll -> az állapotsor tömören ezt a színt kapja.
+                        if (tab.fixedHeader || tab.noHeader) return@request
+                        val share = best.value / 96f
+                        if (c != 0 && share >= 0.75f && tab.padColor != 0 && colorClose(c, tab.padColor)) {
+                            tab.hdrHits++
+                            if (tab.hdrHits >= 3 && tab.maxScroll >= scene.height * 0.6f) {
+                                tab.fixedHeader = true
+                                tab.headerColor = tab.padColor
+                                updateLens()
+                            }
+                        } else {
+                            tab.hdrHits = 0
+                            if (tab.maxScroll > dp(160)) tab.noHeader = true
+                        }
+                        return@request
                     }
                     if (header) {
                         if (c != 0 && c != tab.headerColor) {

@@ -27,13 +27,28 @@ jobs:
       - name: APK fordítása
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
+      - name: Verzió
+        id: ver
+        run: echo "name=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+
       - name: Átnevezés
-        run: cp app/build/outputs/apk/release/app-release.apk GlassBrowser-${{ github.run_number }}.apk
+        run: cp app/build/outputs/apk/release/app-release.apk GlassBrowser-${{ steps.ver.outputs.name }}.apk
+
+      - name: Régi kiadások törlése (csak a legújabb marad)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for t in $(gh release list --limit 300 --json tagName -q '.[].tagName'); do
+            if [ "$t" != "v${{ steps.ver.outputs.name }}" ]; then
+              gh release delete "$t" --yes --cleanup-tag || true
+            fi
+          done
 
       - name: Kiadás (letölthető APK)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Glass Browser – build ${{ github.run_number }}
-          files: GlassBrowser-${{ github.run_number }}.apk
+          tag_name: v${{ steps.ver.outputs.name }}
+          name: Glass Browser ${{ steps.ver.outputs.name }}
+          files: GlassBrowser-${{ steps.ver.outputs.name }}.apk
+          overwrite_files: true
           make_latest: true

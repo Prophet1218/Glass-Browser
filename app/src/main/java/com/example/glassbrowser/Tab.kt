@@ -33,6 +33,10 @@ class Tab(val webView: GlassWebView) {
     var headerColor: Int = 0
     /** Belső görgetés (képpont), ha az oldal nem a WebView-t görgeti, hanem egy belső elemet. */
     var innerScroll: Int = 0
+    /** Képi fejléc-felismerés állapota (lásd MainActivity.probeRow). */
+    var noHeader: Boolean = false
+    var hdrHits: Int = 0
+    var maxScroll: Int = 0
 }
 
 object Urls {

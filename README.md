@@ -1,4 +1,4 @@
-# Glass Browser 1.4
+# Glass Browser 1.5
 
 Saját Android böngésző liquid glass felülettel.
 

@@ -363,6 +363,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.preferences, rootKey)
+        // A láthatóság-változásokat a lista tételenként kapja meg (DiffUtil), nem egy teljes
+        // újrarajzolásként: így nyitáskor / záráskor a sorok valóban csúsznak, nem csak áttűnnek.
+        preferenceManager.preferenceComparisonCallback = PreferenceManager.SimplePreferenceComparisonCallback()
         val act = requireActivity() as SettingsActivity
         L.prefs(preferenceScreen)
         setupSections()
@@ -565,6 +568,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
             head.summary = names.take(3).joinToString(", ") + if (names.size > 3) ", …" else ""
             head.order = -1
             cat.title = null
+            // a kategória üres sora csak térköz a kártyák között
+            cat.layoutResource = R.layout.pref_section_gap
             cat.addPreference(head)
             head.setExpanded(false)
             head.onToggle = { opened -> onSectionToggled(opened) }
@@ -572,36 +577,46 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
+    private var sectionAnimator: SectionItemAnimator? = null
+    private var toggleToken = 0
+
+    /**
+     * Szakasz nyitása / zárása. Egyetlen, összefüggő animáció: a másik nyitott szakasz bezárul,
+     * a megnyitott címsora ugyanabban a mozdulatban a lista tetejére csúszik, alatta lépcsőzetesen
+     * megjelennek a sorai (nincs külön, utólagos görgetés, ami "összeveszne" az animációval).
+     */
     private fun onSectionToggled(opened: SectionPreference) {
-        val list = listView
-        // a short fade / slide while rows appear and disappear
-        list?.itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator().apply {
-            addDuration = 220L
-            removeDuration = 160L
-            moveDuration = 260L
-            changeDuration = 0L
-        }
+        val list = listView ?: return
+        val anim = sectionAnimator ?: SectionItemAnimator(requireContext()).also { sectionAnimator = it }
+        if (list.itemAnimator !== anim) list.itemAnimator = anim
+        val token = ++toggleToken
         if (opened.expanded) {
             for (s in sections) if (s !== opened && s.expanded) s.setExpanded(false)
-            list?.postDelayed({
+            // az adapter a láthatóság-változást egy későbbi üzenetben dolgozza fel; ez utána fut,
+            // így a pozíció már az új listára vonatkozik, és a görgetés ugyanabba az elrendezésbe kerül
+            list.post {
+                if (token != toggleToken || !isAdded) return@post
                 val pos = (list.adapter as? androidx.preference.PreferenceGroup.PreferencePositionCallback)
                     ?.getPreferenceAdapterPosition(opened) ?: -1
-                if (pos >= 0) {
-                    val lm = list.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager
-                    val first = lm?.findFirstVisibleItemPosition() ?: -1
-                    // the opened section's title slides up near the top if it was further down
-                    if (lm != null && pos > first) {
-                        val sm = object : androidx.recyclerview.widget.LinearSmoothScroller(requireContext()) {
-                            override fun getVerticalSnapPreference(): Int = SNAP_TO_START
-                        }
-                        sm.targetPosition = pos
-                        lm.startSmoothScroll(sm)
-                    }
+                val lm = list.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager
+                if (pos >= 0 && lm != null) {
+                    val top = (14 * resources.displayMetrics.density).toInt()
+                    val v = lm.findViewByPosition(pos)
+                    if (v == null || v.top != top) lm.scrollToPositionWithOffset(pos, top)
                 }
-            }, 280L)
+            }
         }
-        // switches need the animator off again (their capsule slides instead of a cross-fade)
-        list?.postDelayed({ list.itemAnimator = null }, 600L)
+        releaseAnimatorLater(list, token, 750L)
+    }
+
+    /** Ha minden animáció lefutott, a lista animátora újra ki van kapcsolva (a kapcsolók miatt). */
+    private fun releaseAnimatorLater(list: RecyclerView, token: Int, delay: Long) {
+        list.postDelayed({
+            val anim = sectionAnimator
+            if (token == toggleToken && anim != null && list.itemAnimator === anim) {
+                if (anim.isRunning) releaseAnimatorLater(list, token, 120L) else list.itemAnimator = null
+            }
+        }, delay)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -609,6 +624,17 @@ class SettingsFragment : PreferenceFragmentCompat() {
         // Átkapcsoláskor a sor ne cserélődjön ki áttűnéssel: így a kapcsoló kapszulája ténylegesen
         // átcsúszik a másik oldalra.
         listView.itemAnimator = null
+        // a szakaszok lekerekített üvegkártyákon, köztük térköz; a régi elválasztó vonalak nélkül
+        setDivider(null)
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val anim = sectionAnimator ?: SectionItemAnimator(requireContext()).also { sectionAnimator = it }
+        listView.addItemDecoration(SectionCardDecoration(requireContext(), sections, anim, night))
+        listView.clipToPadding = false
+        listView.setPadding(
+            listView.paddingLeft, listView.paddingTop, listView.paddingRight,
+            listView.paddingBottom + (24 * resources.displayMetrics.density).toInt()
+        )
         // görgetéskor a lista teteje és alja üveg alá csúszva elmosódik
         if (Build.VERSION.SDK_INT >= 33) setupEdgeBlur()
     }

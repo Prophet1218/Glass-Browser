@@ -1351,8 +1351,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     /** Megnyitás előtt pillanatképet készít a képernyőről: ez lesz a beállítások üveghátterének alapja. */
-    private fun openSettings() {
-        val launch = { settingsLauncher.launch(Intent(this, SettingsActivity::class.java)) }
+    private fun openSettings() = snapBackdrop { settingsLauncher.launch(Intent(this, SettingsActivity::class.java)) }
+
+    /** Fresh blurred-backdrop snapshot (settings / downloads glass background), then [launch]. */
+    private fun snapBackdrop(launch: () -> Unit) {
         val w = root.width
         val h = root.height
         if (w <= 0 || h <= 0) {
@@ -5167,7 +5169,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             if (translated) undoTranslate() else startTranslate()
         }
         menuRow(L.t("Letöltések"), icon = R.drawable.ic_m_download) {
-            startActivity(Intent(this, DownloadsActivity::class.java))
+            snapBackdrop { startActivity(Intent(this, DownloadsActivity::class.java)) }
         }
         val desktop = prefs.getBoolean("desktop_mode", false)
         menuRow(L.t("Asztali oldal"), icon = R.drawable.ic_m_desktop, check = desktop) {

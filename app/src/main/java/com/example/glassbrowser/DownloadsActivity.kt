@@ -128,6 +128,10 @@ class DownloadsActivity : AppCompatActivity() {
     ) {
         var deleting = false
         var press: Animator? = null
+        var downX = 0f
+        var downY = 0f
+        var swiping = false
+        var item: Any? = null
     }
 
     private val items = ArrayList<Item>()
@@ -174,6 +178,13 @@ class DownloadsActivity : AppCompatActivity() {
         night = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // the blurred backdrop runs behind the status and navigation bars too
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= 29) {
+            window.isNavigationBarContrastEnforced = false
+            window.isStatusBarContrastEnforced = false
+        }
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = !night
             isAppearanceLightNavigationBars = !night
@@ -558,10 +569,51 @@ class DownloadsActivity : AppCompatActivity() {
 
         val row = Row(card, art, name, bar, sub, share, del)
         // lenyomásra a kártya finoman összenyomódik, elengedve rugózva visszaugrik
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         card.setOnTouchListener { _, e ->
+            if (row.deleting) return@setOnTouchListener true
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> pressCard(row, true)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> pressCard(row, false)
+                MotionEvent.ACTION_DOWN -> {
+                    row.downX = e.rawX
+                    row.downY = e.rawY
+                    row.swiping = false
+                    pressCard(row, true)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - row.downX
+                    val dy = e.rawY - row.downY
+                    if (!row.swiping && kotlin.math.abs(dx) > slop * 1.5f && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                        // oldalra húzás: törlés (a kártya elmosódva elhalványul, mint a lapváltóban)
+                        row.swiping = true
+                        scroll.requestDisallowInterceptTouchEvent(true)
+                        card.isPressed = false
+                        card.cancelLongPress()
+                        pressCard(row, false)
+                    }
+                    if (row.swiping) {
+                        swipeFx(card, dx)
+                        return@setOnTouchListener true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (row.swiping) {
+                        row.swiping = false
+                        val dx = e.rawX - row.downX
+                        val p = (kotlin.math.abs(dx) / card.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        val it0 = row.item as? Item
+                        if (e.actionMasked == MotionEvent.ACTION_UP && p > 0.28f && it0 != null) {
+                            delete(row, it0, fromDx = dx)
+                        } else {
+                            val a = ValueAnimator.ofFloat(dx, 0f)
+                            a.duration = 380L
+                            a.interpolator = OvershootInterpolator(1.4f)
+                            a.addUpdateListener { v -> swipeFx(card, v.animatedValue as Float) }
+                            a.start()
+                        }
+                        return@setOnTouchListener true
+                    }
+                    pressCard(row, false)
+                }
             }
             false
         }
@@ -635,23 +687,46 @@ class DownloadsActivity : AppCompatActivity() {
         if (row.share.visibility != wantShare) row.share.visibility = wantShare
         row.card.setOnClickListener { open(item) }
         row.share.setOnClickListener { share(item) }
-        row.del.setOnClickListener { delete(row, item) }
+        row.del.setOnClickListener { delete(row, item, fromDx = 0f) }
+        row.item = item
+    }
+
+    /**
+     * "Elhalványulás elmosódva" (mint a lapváltó egyik bezárási animációja): [dx] a vízszintes
+     * elmozdulás; a kártya kicsit oldalra csúszik, összemegy, elmosódik és elhalványul.
+     */
+    private fun swipeFx(card: View, dx: Float) {
+        val w = card.width.toFloat().coerceAtLeast(1f)
+        val p = (kotlin.math.abs(dx) / w).coerceIn(0f, 1f)
+        card.translationX = dx * 0.25f
+        val sc = 1f - 0.06f * p
+        card.scaleX = sc
+        card.scaleY = sc
+        card.alpha = (1f - 1.1f * p).coerceIn(0f, 1f)
+        if (Build.VERSION.SDK_INT >= 31) {
+            val r = dpf(28f) * p
+            card.setRenderEffect(if (r < 0.5f) null else RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP))
+        }
     }
 
     /**
      * Törlés: a kártya jobbra kicsúszva elhalványul, majd a helye simán összezárul (a többi
      * kártya nem ugrik), csak utána töröljük a letöltést és frissül a lista.
      */
-    private fun delete(row: Row, item: Item) {
+    private fun delete(row: Row, item: Item, fromDx: Float = 0f) {
         if (row.deleting) return
         row.deleting = true
         row.press?.cancel()
         val card = row.card
         card.animate().cancel()
-        card.animate().alpha(0f).translationX(card.width * 0.35f).scaleX(0.96f).scaleY(0.96f)
-            .setStartDelay(0L).setDuration(220L).setInterpolator(PathInterpolator(0.4f, 0f, 0.7f, 1f))
-            .setListener(null).withLayer()
-            .withEndAction {
+        val w = card.width.toFloat().coerceAtLeast(1f)
+        val dir = if (fromDx < 0f) -1f else 1f
+        val fx = ValueAnimator.ofFloat(fromDx, dir * w)
+        fx.duration = (300L * (1f - kotlin.math.abs(fromDx) / w)).toLong().coerceAtLeast(120L)
+        fx.interpolator = PathInterpolator(0.3f, 0f, 0.4f, 1f)
+        fx.addUpdateListener { swipeFx(card, it.animatedValue as Float) }
+        fx.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
                 val lp = card.layoutParams as LinearLayout.LayoutParams
                 val h = card.height
                 val m = lp.bottomMargin
@@ -672,17 +747,16 @@ class DownloadsActivity : AppCompatActivity() {
                         lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
                         lp.bottomMargin = m
                         card.layoutParams = lp
-                        card.alpha = 1f
-                        card.translationX = 0f
-                        card.scaleX = 1f
-                        card.scaleY = 1f
+                        swipeFx(card, 0f)
                         row.deleting = false
                         lastKey = ""
                         load()
                     }
                 })
                 a.start()
-            }.start()
+            }
+        })
+        fx.start()
     }
 
     private fun open(item: Item) {

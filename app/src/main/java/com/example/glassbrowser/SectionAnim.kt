@@ -70,9 +70,10 @@ class SectionItemAnimator(context: Context) : SimpleItemAnimator() {
 
     init {
         supportsChangeAnimations = false
-        moveDuration = 500L
-        addDuration = 380L
-        removeDuration = 190L
+        // ~15% slower than before (user request)
+        moveDuration = 575L
+        addDuration = 440L
+        removeDuration = 200L
         changeDuration = 0L
     }
 
@@ -136,26 +137,38 @@ class SectionItemAnimator(context: Context) : SimpleItemAnimator() {
         // eltűnők: alulról felfelé, gyorsan
         val removes = pendingRemoves.sortedByDescending { it.itemView.top }
         pendingRemoves.clear()
-        removes.forEachIndexed { i, h -> startRemove(h, min(i, 8) * 12L) }
+        removes.forEachIndexed { i, h -> startRemove(h, min(i, 8) * 10L) }
 
-        // mozgók: mind egyszerre indulnak, rugós görbével
+        // mozgók: mind egyszerre indulnak, rugós görbével. Bezáráskor kicsit később, hogy a
+        // felcsúszó kártyák ne takarják el a még halványuló sorokat (nincs átfedés).
         val moves = ArrayList(pendingMoves)
         pendingMoves.clear()
-        for (h in moves) startMove(h)
+        val moveDelay = if (hadRemoves) (removeDuration * 0.55f).toLong() else 0L
+        for (h in moves) startMove(h, moveDelay)
 
-        // újak: fentről lefelé, lépcsőzetesen
+        // újak: fentről lefelé, akkor jelennek meg, amikor a lefelé csúszó tartalom már
+        // elhagyta a helyüket (nyitáskor a következő kártya nem fut rá a beúszó sorokra)
         val adds = pendingAdds.sortedBy { it.itemView.top }
         pendingAdds.clear()
-        val base = if (hadRemoves) 70L else 24L
-        adds.forEachIndexed { i, h -> startAdd(h, base + min(i, 12) * 26L) }
+        if (adds.isNotEmpty()) {
+            val top = adds.first().itemView.top
+            val span = (adds.last().itemView.bottom - top).coerceAtLeast(1)
+            val hasMoves = moves.isNotEmpty()
+            adds.forEach { h ->
+                val frac = (h.itemView.top - top).toFloat() / span
+                val d = if (hasMoves) (moveDuration * (0.10f + 0.34f * frac)).toLong() else (24f + 200f * frac).toLong()
+                startAdd(h, moveDelay + d)
+            }
+        }
     }
 
-    private fun startMove(holder: RecyclerView.ViewHolder) {
+    private fun startMove(holder: RecyclerView.ViewHolder, delay: Long = 0L) {
         val v = holder.itemView
         val sx = v.translationX
         val sy = v.translationY
         val a = ValueAnimator.ofFloat(0f, 1f)
         a.duration = moveDuration
+        a.startDelay = delay
         a.interpolator = LinearInterpolator()
         a.addUpdateListener {
             val f = 1f - spring.getInterpolation(it.animatedFraction)
@@ -191,7 +204,7 @@ class SectionItemAnimator(context: Context) : SimpleItemAnimator() {
         a.interpolator = LinearInterpolator()
         a.addUpdateListener {
             val r = it.animatedFraction
-            v.alpha = decel.getInterpolation(min(1f, r * 1.5f))
+            v.alpha = decel.getInterpolation(min(1f, r * 1.25f))
             v.translationY = -shift * (1f - spring.getInterpolation(r))
         }
         a.addListener(object : AnimatorListenerAdapter() {

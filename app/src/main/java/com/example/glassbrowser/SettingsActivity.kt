@@ -591,22 +591,25 @@ class SettingsFragment : PreferenceFragmentCompat() {
         if (list.itemAnimator !== anim) list.itemAnimator = anim
         val token = ++toggleToken
         if (opened.expanded) {
+            // the opened section stays exactly where it was on screen: it only opens downward
+            // (closing another section above it must not pull it upward)
+            val cb = list.adapter as? androidx.preference.PreferenceGroup.PreferencePositionCallback
+            val lm = list.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager
+            val pos0 = cb?.getPreferenceAdapterPosition(opened) ?: -1
+            val oldTop = if (pos0 >= 0) lm?.findViewByPosition(pos0)?.top else null
             for (s in sections) if (s !== opened && s.expanded) s.setExpanded(false)
-            // az adapter a láthatóság-változást egy későbbi üzenetben dolgozza fel; ez utána fut,
-            // így a pozíció már az új listára vonatkozik, és a görgetés ugyanabba az elrendezésbe kerül
-            list.post {
-                if (token != toggleToken || !isAdded) return@post
-                val pos = (list.adapter as? androidx.preference.PreferenceGroup.PreferencePositionCallback)
-                    ?.getPreferenceAdapterPosition(opened) ?: -1
-                val lm = list.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager
-                if (pos >= 0 && lm != null) {
-                    val top = (14 * resources.displayMetrics.density).toInt()
-                    val v = lm.findViewByPosition(pos)
-                    if (v == null || v.top != top) lm.scrollToPositionWithOffset(pos, top)
+            if (oldTop != null) {
+                list.post {
+                    if (token != toggleToken || !isAdded) return@post
+                    val pos = cb?.getPreferenceAdapterPosition(opened) ?: -1
+                    if (pos >= 0 && lm != null) {
+                        val v = lm.findViewByPosition(pos)
+                        if (v == null || v.top != oldTop) lm.scrollToPositionWithOffset(pos, oldTop)
+                    }
                 }
             }
         }
-        releaseAnimatorLater(list, token, 750L)
+        releaseAnimatorLater(list, token, 900L)
     }
 
     /** Ha minden animáció lefutott, a lista animátora újra ki van kapcsolva (a kapcsolók miatt). */
@@ -635,8 +638,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
             listView.paddingLeft, listView.paddingTop, listView.paddingRight,
             listView.paddingBottom + (24 * resources.displayMetrics.density).toInt()
         )
-        // görgetéskor a lista teteje és alja üveg alá csúszva elmosódik
-        if (Build.VERSION.SDK_INT >= 33) setupEdgeBlur()
+        // the list fades out softly at the top and bottom edges (no hard cut / blur band)
+        listView.isVerticalFadingEdgeEnabled = true
+        listView.setFadingEdgeLength((44 * resources.displayMetrics.density).toInt())
     }
 
     /**

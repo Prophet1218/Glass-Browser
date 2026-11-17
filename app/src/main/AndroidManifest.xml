@@ -286,6 +286,6 @@
             android:name=".DownloadsActivity"
             android:exported="false"
             android:label="Letöltések"
-            android:theme="@style/Theme.GlassBrowser.Plain" />
+            android:theme="@style/Theme.GlassBrowser.Settings" />
     </application>
 </manifest>

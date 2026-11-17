@@ -39,6 +39,30 @@
         <item>clear</item>
     </string-array>
 
+    <string-array name="tab_layout_names">
+        <item>Rács (2 oszlop)</item>
+        <item>Halom (egymásra rakott lapok)</item>
+    </string-array>
+    <string-array name="tab_layout_values">
+        <item>grid</item>
+        <item>stack</item>
+    </string-array>
+
+    <string-array name="close_anim_names">
+        <item>Kirepülés elfordulva</item>
+        <item>Összezsugorodás</item>
+        <item>Elhalványulás elmosódva</item>
+        <item>Kilökés felfelé</item>
+        <item>Összecsukódás</item>
+    </string-array>
+    <string-array name="close_anim_values">
+        <item>fly</item>
+        <item>shrink</item>
+        <item>blur</item>
+        <item>toss</item>
+        <item>fold</item>
+    </string-array>
+
     <string-array name="language_names">
         <item>Magyar</item>
         <item>English</item>

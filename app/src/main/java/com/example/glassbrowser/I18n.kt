@@ -278,7 +278,16 @@ object L {
         "Visszavonás" to "Undo",
         "Fordítás" to "Translate",
         "Fordítás felajánlása" to "Offer to translate",
-        "Idegen nyelvű oldalon felajánlja a fordítást, mint a Chrome." to "Offers to translate pages in other languages, like Chrome."
+        "Idegen nyelvű oldalon felajánlja a fordítást, mint a Chrome." to "Offers to translate pages in other languages, like Chrome.",
+        "Lapváltó elrendezése" to "Tab switcher layout",
+        "Rács (2 oszlop)" to "Grid (2 columns)",
+        "Halom (egymásra rakott lapok)" to "Stack (overlapping tabs)",
+        "Lap bezárási animációja" to "Tab close animation",
+        "Kirepülés elfordulva" to "Fly out with a twist",
+        "Összezsugorodás" to "Shrink",
+        "Elhalványulás elmosódva" to "Blur and fade",
+        "Kilökés felfelé" to "Toss up",
+        "Összecsukódás" to "Fold away"
     )
 
     private val HU: Map<String, String> = EN.entries.associate { (k, v) -> v to k }

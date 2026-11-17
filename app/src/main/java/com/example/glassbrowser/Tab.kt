@@ -27,6 +27,8 @@ class Tab(val webView: GlassWebView) {
     var isPrivate: Boolean = false
     /** Az oldal fejlécének színe (az állapotsor mögötti térköz kitöltéséhez); 0 = ismeretlen. */
     var padColor: Int = 0
+    /** Az oldal tetején rögzített fejléc van (az állapotsor mögött a fejléc folytatódik). */
+    var fixedHeader: Boolean = false
 }
 
 object Urls {

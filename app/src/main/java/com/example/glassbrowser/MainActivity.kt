@@ -309,6 +309,7 @@ class MainActivity : AppCompatActivity() {
         setupInsets()
         setupDockMenuButton()
         setupPrivateButton()
+        setupGlow()
         // az előző futásból maradt privát adatok törlése
         handler.postDelayed({ deletePrivateData() }, 1500L)
         L.tree(root)
@@ -335,6 +336,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------------------------------------------------------------- üveg
+
+    /** Érintéskor fény a sáv részein: az ujj alatt világít, és követi az ujjat (mint az iOS-en). */
+    private fun setupGlow() {
+        for (v in listOf<FrameLayout>(barLeft, barCenter, barRight)) {
+            val glow = GlowDrawable(resources.displayMetrics.density)
+            v.foreground = glow
+            (v as? PressLayout)?.onTouchMove = { x, y, down ->
+                glow.track(x, y, down, if (glassDark() || glassClear()) Color.WHITE else Color.WHITE)
+            }
+        }
+    }
 
     private fun setupGlass() {
         val d = resources.displayMetrics.density
@@ -644,16 +656,29 @@ class MainActivity : AppCompatActivity() {
             "if(H>0){if(!st){st=d.createElement('style');st.id='__glass_top';d.documentElement.appendChild(st);}" +
             "st.textContent='html{padding-top:'+H+'px !important;box-sizing:border-box !important}';}" +
             "else if(st){st.remove();}" +
-            "function fix(){if(!d.body)return;var all=d.body.getElementsByTagName('*');" +
+            "function fix(){if(!d.body)return;var all=d.body.getElementsByTagName('*');var hdr=0;" +
             "for(var i=0;i<all.length;i++){var e=all[i];" +
+            // korábban eltolt fejléc / sáv
             "if(e.__gbT!==undefined){if(e.__gbH!==H){" +
             "if(H>0)e.style.setProperty('top',(e.__gbT+H)+'px','important');else{e.style.removeProperty('top');delete e.__gbT;}" +
+            "e.__gbH=H;}if(e.__gbW)hdr=1;continue;}" +
+            // korábban térközt kapott, teljes képernyős réteg
+            "if(e.__gbP!==undefined){if(e.__gbH!==H){" +
+            "if(H>0)e.style.setProperty('padding-top',(e.__gbP+H)+'px','important');else{e.style.removeProperty('padding-top');delete e.__gbP;}" +
             "e.__gbH=H;}continue;}" +
             "if(H<=0)continue;var cs=getComputedStyle(e);" +
             "if(cs.position==='fixed'||cs.position==='sticky'){var t=parseFloat(cs.top);" +
-            "if(!isNaN(t)&&t>=0&&t<4&&e.getBoundingClientRect().height<innerHeight*0.5){" +
-            "e.__gbT=t;e.__gbH=H;e.style.setProperty('top',(t+H)+'px','important');}}}}" +
-            "fix();if(H>0&&window.__gbTimer!==H){window.__gbTimer=H;setTimeout(fix,500);setTimeout(fix,1500);setTimeout(fix,4000);}" +
+            "if(!isNaN(t)&&t>=0&&t<4){var r=e.getBoundingClientRect();" +
+            "if(r.height<innerHeight*0.5){e.__gbT=t;e.__gbH=H;e.style.setProperty('top',(t+H)+'px','important');" +
+            "if(cs.position==='fixed'&&r.width>=innerWidth*0.9&&r.height>0){e.__gbW=1;hdr=1;}}" +
+            // teljes képernyős réteg (pl. a Google keresője): a háttere marad, a tartalma lejjebb kerül
+            "else if(cs.position==='fixed'&&r.height>0){var pt=parseFloat(cs.paddingTop)||0;e.__gbP=pt;e.__gbH=H;" +
+            "e.style.setProperty('padding-top',(pt+H)+'px','important');}}}}" +
+            "window.__gbHdr=hdr;}" +
+            "fix();if(H>0&&window.__gbTimer!==H){window.__gbTimer=H;setTimeout(fix,500);setTimeout(fix,1500);setTimeout(fix,4000);" +
+            // később megjelenő rétegek, fejlécek is (pl. keresőmező megnyitása)
+            "if(!window.__gbObs&&window.MutationObserver){var tm=0;window.__gbObs=new MutationObserver(function(){if(tm)return;" +
+            "tm=setTimeout(function(){tm=0;fix();},250);});window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});}}" +
             "})();"
     }
 
@@ -732,8 +757,13 @@ class MainActivity : AppCompatActivity() {
                 if (flowLayout()) {
                     // amíg az oldal a tetején van, a fölötte lévő térköz ennyi képpont: ezt az oldal
                     // első sorának színével töltjük ki (különben szürke / sötét sáv látszana)
-                    val pad = if (overviewShown) 0f else (statusTop - (activeWebView?.scrollY ?: statusTop)).coerceAtLeast(0).toFloat()
-                    val amt = flowAmt * vis
+                    // Rögzített fejlécű oldalnál (pl. vivo.com) az állapotsor mögött nem a görgetett
+                    // tartalom úszik át, hanem a fejléc folytatódik (a színével kitöltve).
+                    val hdr = activeTab?.fixedHeader == true
+                    val pad = if (overviewShown) 0f
+                    else if (hdr) statusTop.toFloat()
+                    else (statusTop - (activeWebView?.scrollY ?: statusTop)).coerceAtLeast(0).toFloat()
+                    val amt = if (hdr) 0f else flowAmt * vis
                     if (amt <= 0.01f) {
                         // az oldal tetején (vagy kihalványított elmosásnál): csak a térköz kitöltése, élesen
                         if (!overviewShown && pad > 0f) {
@@ -1266,6 +1296,7 @@ class MainActivity : AppCompatActivity() {
                 if (url != null) tab.url = url
                 wv.resetInset()
                 tab.padColor = 0
+                tab.fixedHeader = false
                 tab.translated = false
                 tab.trPending = false
                 if (tab === activeTab) {
@@ -1304,6 +1335,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         wv.webChromeClient = object : WebChromeClient() {
+            // a videók helyén betöltés előtt ne a szürke "lejátszás" kép látsszon
+            override fun getDefaultVideoPoster(): Bitmap? =
+                Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 tab.progress = newProgress
                 if (tab === activeTab) syncUi()
@@ -1330,6 +1365,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (docked && !dockTop) onDockScroll(scrollY, dy)
                 if (scrollY == 0 && oldScrollY > 0) probePadColor(tab, 120L)
+                // görgetés után újra megnézzük (rögzített fejléc csak görgetéskor jelenhet meg)
+                if (kotlin.math.abs(dy) > 0) {
+                    handler.removeCallbacks(padRecheck)
+                    handler.postDelayed(padRecheck, 350L)
+                }
                 onTranslateScroll(dy)
                 updateTopFade(scrollY)
             }
@@ -1904,52 +1944,168 @@ class MainActivity : AppCompatActivity() {
     private var swipeStartX = 0f
     private var swipeConsumed = false
 
-    /** Felfelé legyintés a keresősávon: megnyílik a lapváltó (mint az iOS Safariban). */
+    private var swipeActive = false
+    private var swipeVel: android.view.VelocityTracker? = null
+    private var swipeAnim: ValueAnimator? = null
+    /** A felhúzás közben összezsugorított oldal helye (innen indul a lapváltó animációja). */
+    private var heroStartRect: RectF? = null
+    private var pendingPageReset = false
+
+    /**
+     * Felhúzás a keresősávról, mint a gesztusvezérlés az alkalmazásoknál: az oldal az ujjal együtt
+     * zsugorodik és emelkedik, amíg nem engeded el. Elengedéskor (elég nagy húzásnál vagy gyors
+     * legyintésnél) megnyílik a lapváltó, különben az oldal visszaugrik a helyére.
+     */
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 swipeConsumed = false
+                swipeActive = false
                 swipeStartY = -1f
-                if (!overviewShown && !overviewBusy && !searchShown && !menuVisible && !urlField.hasFocus()) {
+                if (!overviewShown && !overviewBusy && !searchShown && !menuVisible && !urlField.hasFocus() &&
+                    activeWebView != null
+                ) {
                     visualRect(barRow, tmpRect)
                     if (tmpRect.contains(ev.x, ev.y)) {
                         swipeStartY = ev.y
                         swipeStartX = ev.x
+                        swipeVel?.recycle()
+                        swipeVel = android.view.VelocityTracker.obtain()
+                        swipeVel?.addMovement(ev)
                     }
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                if (swipeStartY >= 0f && !swipeConsumed) {
+                swipeVel?.addMovement(ev)
+                if (swipeStartY >= 0f) {
                     val dy = swipeStartY - ev.y
                     val dx = kotlin.math.abs(ev.x - swipeStartX)
-                    if (dy > dp(36) && dy > dx * 1.4f) {
+                    if (!swipeActive && dy > dp(14) && dy > dx * 1.3f) {
+                        swipeActive = true
                         swipeConsumed = true
-                        // a sáv gombjai ne kapják meg a felengedést
                         val cancel = MotionEvent.obtain(ev)
                         cancel.action = MotionEvent.ACTION_CANCEL
                         super.dispatchTouchEvent(cancel)
                         cancel.recycle()
-                        haptic()
-                        overviewViaCenter = true
-                        showOverview()
+                        startPageDrag()
+                    }
+                    if (swipeActive) {
+                        dragPage(dy.coerceAtLeast(0f), ev.x - swipeStartX)
                         return true
                     }
                 }
             }
-        }
-        if (swipeConsumed) {
-            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
-                swipeConsumed = false
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (swipeActive) {
+                    swipeVel?.addMovement(ev)
+                    swipeVel?.computeCurrentVelocity(1000)
+                    val vy = swipeVel?.yVelocity ?: 0f
+                    val dy = swipeStartY - ev.y
+                    swipeActive = false
+                    swipeStartY = -1f
+                    swipeConsumed = false
+                    endPageDrag(ev.actionMasked == MotionEvent.ACTION_UP && (dy > scene.height * 0.16f || vy < -1800f))
+                    return true
+                }
                 swipeStartY = -1f
             }
-            return true
         }
+        if (swipeConsumed) return true
         return super.dispatchTouchEvent(ev)
+    }
+
+    private var dragProgress = 0f
+
+    private fun startPageDrag() {
+        swipeAnim?.cancel()
+        haptic()
+        hideTranslateBar()
+        val c = contentContainer
+        c.pivotX = c.width / 2f
+        c.pivotY = c.height.toFloat()
+        c.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(v: View, o: android.graphics.Outline) {
+                o.setRoundRect(0, 0, v.width, v.height, screenRadius * (0.6f + 0.4f / v.scaleX.coerceAtLeast(0.3f)))
+            }
+        }
+        c.clipToOutline = true
+    }
+
+    /** A húzás állapota: a zsugorodás egyre lassul (gumiszerű), az oldal követi az ujjat. */
+    private fun dragPage(dy: Float, dx: Float) {
+        val h = scene.height.toFloat().coerceAtLeast(1f)
+        val p = (dy / (h * 0.55f)).coerceIn(0f, 1.4f)
+        val eased = 1f - 1f / (1f + p * 1.6f)
+        dragProgress = p
+        val c = contentContainer
+        val sc = 1f - 0.5f * eased
+        c.scaleX = sc
+        c.scaleY = sc
+        c.translationY = -dy * 0.55f
+        c.translationX = dx * 0.25f
+        c.invalidateOutline()
+        barRow.alpha = (1f - p * 2.2f).coerceIn(0f, 1f)
+        updateLens()
+    }
+
+    private fun resetPageTransform() {
+        val c = contentContainer
+        c.scaleX = 1f
+        c.scaleY = 1f
+        c.translationX = 0f
+        c.translationY = 0f
+        c.clipToOutline = false
+        c.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+    }
+
+    private fun endPageDrag(open: Boolean) {
+        swipeVel?.recycle()
+        swipeVel = null
+        if (open) {
+            // a lapváltó pontosan az összezsugorított oldal helyéről indul
+            activeWebView?.let { wv ->
+                visualRect(wv, tmpRect)
+                heroStartRect = RectF(tmpRect)
+            }
+            showOverview()
+            return
+        }
+        // vissza a helyére, rugózva
+        val c = contentContainer
+        val startS = c.scaleX
+        val startTy = c.translationY
+        val startTx = c.translationX
+        val startA = barRow.alpha
+        val a = ValueAnimator.ofFloat(0f, 1f)
+        a.duration = 380L
+        a.interpolator = OvershootInterpolator(1.1f)
+        a.addUpdateListener {
+            val f = it.animatedValue as Float
+            val sc = startS + (1f - startS) * f
+            c.scaleX = sc
+            c.scaleY = sc
+            c.translationY = startTy * (1f - f)
+            c.translationX = startTx * (1f - f)
+            c.invalidateOutline()
+            barRow.alpha = (startA + (1f - startA) * f).coerceIn(0f, 1f)
+            updateLens()
+        }
+        a.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                resetPageTransform()
+                barRow.alpha = 1f
+                updateLens()
+            }
+        })
+        swipeAnim = a
+        a.start()
     }
 
     private fun showOverview() {
         if (overviewShown || overviewBusy) {
             overviewViaCenter = false
+            heroStartRect = null
+            if (!overviewShown) resetPageTransform()
             return
         }
         val tab = activeTab ?: return
@@ -1974,6 +2130,7 @@ class MainActivity : AppCompatActivity() {
             overview.visibility = View.VISIBLE
             // a sáv végig látszik, csak a tartalma tűnik át a lapváltó gombjaira
             setBarMode(true, animate = true)
+            if (barRow.alpha < 1f) barRow.animate().alpha(1f).setDuration(220).start()
             // a rács elrendezése után tudjuk meg, hová kell a képnek zsugorodnia
             tabList.doOnPreDraw {
                 setTitlesHidden()
@@ -2157,6 +2314,8 @@ class MainActivity : AppCompatActivity() {
      * Az oldal fejlécének háttérszíne (CSS-ből), az állapotsor mögötti térköz egyszínű
      * kitöltéséhez. Így nem nyúlnak fel az ikonok és a fejléc elemei az állapotsor mögé.
      */
+    private val padRecheck = Runnable { activeTab?.let { probePadColor(it, 0L) } }
+
     private val padProbe: Bitmap = Bitmap.createBitmap(96, 1, Bitmap.Config.ARGB_8888)
     private val padPixels = IntArray(96)
 
@@ -2169,7 +2328,16 @@ class MainActivity : AppCompatActivity() {
         if (!flowLayout()) return
         handler.postDelayed({
             val wv = tab.webView
-            if (tab !== activeTab || wv.scrollY != 0 || overviewShown || searchShown || capturing) return@postDelayed
+            if (tab !== activeTab || overviewShown || searchShown || capturing) return@postDelayed
+            // van-e az oldal tetején rögzített fejléc (a térköz-szkript jegyzi meg)
+            wv.evaluateJavascript("window.__gbHdr===1") { r ->
+                val h = r == "true"
+                if (h != tab.fixedHeader) {
+                    tab.fixedHeader = h
+                    if (tab === activeTab) updateLens()
+                }
+            }
+            if (wv.scrollY != 0 && !tab.fixedHeader) return@postDelayed
             val w = scene.width
             val y = statusTop + dp(2)
             if (w <= 0 || y + 1 >= scene.height) return@postDelayed
@@ -2356,7 +2524,13 @@ class MainActivity : AppCompatActivity() {
         if (card != null) {
             heroTab = tab
             cardView(tab)?.alpha = 0f
-            hero.setup(tab.thumbnail, webRect(), card, screenRadius, dp(22).toFloat(), bgColor)
+            val startRect = if (opening) heroStartRect else null
+            hero.setup(tab.thumbnail, startRect ?: webRect(), card, screenRadius, dp(22).toFloat(), bgColor)
+            if (startRect != null) {
+                // a felhúzott oldal helyét a kép veszi át, az oldal maga visszaáll (a lapváltó alatt)
+                heroStartRect = null
+                pendingPageReset = true
+            }
             // felfelé legyintésnél a kép előbb a képernyő közepére húzódik, onnan úszik a helyére
             hero.via = if (opening && overviewViaCenter) {
                 val cw = card.width() * 1.18f
@@ -2403,6 +2577,11 @@ class MainActivity : AppCompatActivity() {
             } else {
                 overview.alpha = (c / 0.55f).coerceIn(0f, 1f)
                 tabList.alpha = 1f
+            }
+            // a felhúzott oldal csak akkor áll vissza, amikor már a lapváltó takarja
+            if (pendingPageReset && overview.alpha >= 0.99f) {
+                pendingPageReset = false
+                resetPageTransform()
             }
             updateLens()
         }

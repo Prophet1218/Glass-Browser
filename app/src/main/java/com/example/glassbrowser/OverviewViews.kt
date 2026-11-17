@@ -162,12 +162,116 @@ class PressLayout @JvmOverloads constructor(
 ) : FrameLayout(context, attrs) {
 
     var onPress: ((Boolean) -> Unit)? = null
+    /** Az ujj helye (a nézeten belül) és hogy le van-e nyomva, a fényhatáshoz. */
+    var onTouchMove: ((Float, Float, Boolean) -> Unit)? = null
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         when (ev.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> onPress?.invoke(true)
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> onPress?.invoke(false)
+            android.view.MotionEvent.ACTION_DOWN -> {
+                onPress?.invoke(true)
+                onTouchMove?.invoke(ev.x, ev.y, true)
+            }
+            android.view.MotionEvent.ACTION_MOVE -> onTouchMove?.invoke(ev.x, ev.y, true)
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                onPress?.invoke(false)
+                onTouchMove?.invoke(ev.x, ev.y, false)
+            }
         }
         return super.dispatchTouchEvent(ev)
     }
+}
+
+/**
+ * Fény az üvegen az ujj alatt: lágy, kör alakú ragyogás, amely követi az ujjat, érintéskor
+ * felerősödik, elengedéskor elhalványul. A felület (kapszula) alakjára van vágva.
+ */
+class GlowDrawable(private val density: Float) : android.graphics.drawable.Drawable() {
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val path = android.graphics.Path()
+    private val rect = RectF()
+    private var x = 0f
+    private var y = 0f
+    private var tx = 0f
+    private var ty = 0f
+    private var level = 0f
+    private var target = 0f
+    private var color = android.graphics.Color.WHITE
+    private var anim: android.animation.ValueAnimator? = null
+
+    fun track(px: Float, py: Float, down: Boolean, c: Int) {
+        color = c
+        tx = px
+        ty = py
+        if (level <= 0.01f) {
+            x = px
+            y = py
+        }
+        val t = if (down) 1f else 0f
+        if (t != target || anim == null) {
+            target = t
+            anim?.cancel()
+            val a = android.animation.ValueAnimator.ofFloat(0f, 1f)
+            a.duration = if (down) 1200L else 520L
+            a.interpolator = android.view.animation.LinearInterpolator()
+            var last = 0L
+            a.addUpdateListener {
+                val now = it.currentPlayTime
+                val dt = ((now - last).coerceAtLeast(1L)).toFloat() / 1000f
+                last = now
+                // a fény lágyan követi az ujjat (kicsit lemaradva, folyékonyan)
+                val k = (1f - Math.exp(-dt * 14.0).toFloat())
+                x += (tx - x) * k
+                y += (ty - y) * k
+                val kl = (1f - Math.exp(-dt * (if (target > level) 10.0 else 6.0)).toFloat())
+                level += (target - level) * kl
+                invalidateSelf()
+                if (target == 0f && level < 0.01f) {
+                    level = 0f
+                    it.cancel()
+                }
+            }
+            anim = a
+            if (down) a.repeatCount = android.animation.ValueAnimator.INFINITE
+            a.start()
+        }
+        if (!down && anim?.isRunning != true) invalidateSelf()
+    }
+
+    override fun draw(canvas: Canvas) {
+        if (level <= 0.01f) return
+        val b = bounds
+        if (b.isEmpty) return
+        rect.set(b)
+        val r = minOf(b.width(), b.height()) / 2f
+        path.reset()
+        path.addRoundRect(rect, r, r, android.graphics.Path.Direction.CW)
+        canvas.save()
+        canvas.clipPath(path)
+        val radius = 70f * density
+        val a = (90 * level).toInt().coerceIn(0, 255)
+        val c0 = (color and 0x00FFFFFF) or (a shl 24)
+        val c1 = (color and 0x00FFFFFF) or ((a / 3) shl 24)
+        paint.shader = android.graphics.RadialGradient(
+            x, y, radius, intArrayOf(c0, c1, 0), floatArrayOf(0f, 0.45f, 1f),
+            android.graphics.Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(rect, paint)
+        // vékony fényes perem az ujj közelében
+        paint.shader = android.graphics.RadialGradient(
+            x, y, radius * 1.6f, intArrayOf((color and 0x00FFFFFF) or ((a * 2 / 3) shl 24), 0),
+            null, android.graphics.Shader.TileMode.CLAMP
+        )
+        paint.style = android.graphics.Paint.Style.STROKE
+        paint.strokeWidth = 1.5f * density
+        rect.inset(0.75f * density, 0.75f * density)
+        canvas.drawRoundRect(rect, r, r, paint)
+        paint.style = android.graphics.Paint.Style.FILL
+        canvas.restore()
+    }
+
+    override fun setAlpha(alpha: Int) {}
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
 }

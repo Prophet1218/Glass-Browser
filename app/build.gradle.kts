@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.glassbrowser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 43
-        versionName = "43.0"
+        versionCode = 44
+        versionName = "44.0"
     }
 
     // Saját, rögzített aláíró kulcs (a projektben van): így a GitHubon és az Android Studióban

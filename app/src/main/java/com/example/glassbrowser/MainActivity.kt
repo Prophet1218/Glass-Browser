@@ -677,41 +677,57 @@ class MainActivity : AppCompatActivity() {
      * kerül takarásba, görgetéskor viszont a tartalom valóban átúszik az állapotsor mögött.
      * Más módban ugyanez a szkript mindent visszaállít.
      */
+    /**
+     * A lebegő / alul rögzített sáv magassága CSS képpontban: ennyivel emeljük meg az oldal alján
+     * rögzített elemeket (pl. süti-sáv), hogy ne a keresősáv mögé essenek.
+     */
+    private fun bottomBarCss(): Int {
+        val d = resources.displayMetrics.density
+        val px = when {
+            dockTop -> 0
+            docked -> dockHeight() + navBottom
+            else -> barRow.layoutParams.height + dp(10) + dp(6) + navBottom
+        }
+        return (px / d).toInt()
+    }
+
     private fun topPadJs(): String {
         val px = if (flowLayout()) (statusTop / resources.displayMetrics.density).toInt() else 0
-        return "(function(){var H=$px;var d=document;if(!d.documentElement)return;" +
-            "var st=d.getElementById('__glass_top');" +
-            "if(H>0){if(!st){st=d.createElement('style');st.id='__glass_top';d.documentElement.appendChild(st);}" +
-            "st.textContent='html{padding-top:'+H+'px !important;box-sizing:border-box !important}';}" +
-            "else if(st){st.remove();}" +
-            "function fix(){if(!d.body)return;var all=d.body.getElementsByTagName('*');var hdr=0;" +
-            "for(var i=0;i<all.length;i++){var e=all[i];" +
-            // korábban eltolt fejléc / sáv
-            "if(e.__gbT!==undefined){if(e.__gbH!==H){" +
-            "if(H>0)e.style.setProperty('top',(e.__gbT+H)+'px','important');else{e.style.removeProperty('top');delete e.__gbT;}" +
-            "e.__gbH=H;}if(e.__gbW)hdr=1;continue;}" +
-            // korábban térközt kapott, teljes képernyős réteg
-            "if(e.__gbP!==undefined){if(e.__gbH!==H){" +
-            "if(H>0)e.style.setProperty('padding-top',(e.__gbP+H)+'px','important');else{e.style.removeProperty('padding-top');delete e.__gbP;}" +
-            "e.__gbH=H;}continue;}" +
-            "if(H<=0)continue;var cs=getComputedStyle(e);" +
-            "if(cs.position==='fixed'||cs.position==='sticky'){var t=parseFloat(cs.top);" +
-            "if(!isNaN(t)&&t>=0&&t<4){var r=e.getBoundingClientRect();" +
-            "if(r.height<innerHeight*0.5){e.__gbT=t;e.__gbH=H;e.style.setProperty('top',(t+H)+'px','important');" +
-            "if(cs.position==='fixed'&&r.width>=innerWidth*0.9&&r.height>0){e.__gbW=1;hdr=1;}}" +
-            // teljes képernyős réteg (pl. a Google keresője): a háttere marad, a tartalma lejjebb kerül
-            "else if(cs.position==='fixed'&&r.height>0){var pt=parseFloat(cs.paddingTop)||0;e.__gbP=pt;e.__gbH=H;" +
-            "e.style.setProperty('padding-top',(pt+H)+'px','important');}}}}" +
-            "window.__gbHdr=hdr;}" +
-            // most éppen látszik-e rögzített fejléc az oldal tetején (görgetéskor elrejtőzhet)
-            "window.__gbHdrNow=function(){var all=d.body?d.body.getElementsByTagName('*'):[];" +
-            "for(var i=0;i<all.length;i++){var e=all[i];if(!e.__gbW)continue;var r=e.getBoundingClientRect();" +
-            "if(r.height>0&&r.top<=H+2&&r.bottom>H+8&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).opacity>0.5)return 1;}return 0;};" +
-            "fix();if(H>0&&window.__gbTimer!==H){window.__gbTimer=H;setTimeout(fix,500);setTimeout(fix,1500);setTimeout(fix,4000);" +
-            // később megjelenő rétegek, fejlécek is (pl. keresőmező megnyitása)
-            "if(!window.__gbObs&&window.MutationObserver){var tm=0;window.__gbObs=new MutationObserver(function(){if(tm)return;" +
-            "tm=setTimeout(function(){tm=0;fix();},250);});window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});}}" +
-            "})();"
+        val bpx = bottomBarCss()
+        return """(function(){var H=$px,B=$bpx;var d=document;if(!d.documentElement)return;
+var st=d.getElementById('__glass_top');
+if(H>0){if(!st){st=d.createElement('style');st.id='__glass_top';d.documentElement.appendChild(st);}
+st.textContent='html{padding-top:'+H+'px !important;box-sizing:border-box !important}';}else if(st){st.remove();}
+window.__gbHdrEls=window.__gbHdrEls||[];
+function chk(e){if(!e||e.nodeType!==1)return;
+var done=false;
+if(e.__gbT!==undefined){done=true;if(e.__gbH!==H){if(H>0)e.style.setProperty('top',(e.__gbT+H)+'px','important');else{e.style.removeProperty('top');delete e.__gbT;}e.__gbH=H;}}
+else if(e.__gbP!==undefined){done=true;if(e.__gbH!==H){if(H>0)e.style.setProperty('padding-top',(e.__gbP+H)+'px','important');else{e.style.removeProperty('padding-top');delete e.__gbP;}e.__gbH=H;}}
+if(e.__gbBo!==undefined){if(e.__gbBB!==B){if(B>0)e.style.setProperty('bottom',(e.__gbBo+B)+'px','important');else{e.style.removeProperty('bottom');delete e.__gbBo;}e.__gbBB=B;}return;}
+if(done||(H<=0&&B<=0))return;
+var cs=getComputedStyle(e);var pos=cs.position;if(pos!=='fixed'&&pos!=='sticky')return;
+var r=e.getBoundingClientRect();if(r.height<=0)return;
+var t=parseFloat(cs.top);var tall=r.height>=innerHeight*0.5;
+if(H>0&&!isNaN(t)&&t>=0&&t<4){
+if(!tall){e.__gbT=t;e.__gbH=H;e.style.setProperty('top',(t+H)+'px','important');
+if(pos==='fixed'&&r.width>=innerWidth*0.9){e.__gbW=1;window.__gbHdrEls.push(e);}return;}
+if(pos==='fixed'){var pt=parseFloat(cs.paddingTop)||0;e.__gbP=pt;e.__gbH=H;e.style.setProperty('padding-top',(pt+H)+'px','important');return;}}
+var b=parseFloat(cs.bottom);
+if(B>0&&pos==='fixed'&&!isNaN(b)&&b>=0&&b<4&&r.height<innerHeight*0.6){e.__gbBo=b;e.__gbBB=B;e.style.setProperty('bottom',(b+B)+'px','important');}}
+function full(){if(!d.body)return;var all=d.body.getElementsByTagName('*');for(var i=0;i<all.length;i++)chk(all[i]);}
+window.__gbHdrNow=function(){var L=window.__gbHdrEls;for(var i=0;i<L.length;i++){var e=L[i];if(!e.isConnected)continue;
+var r=e.getBoundingClientRect();if(r.height>0&&r.top<=H+2&&r.bottom>H+8){var c=getComputedStyle(e);if(c.visibility!=='hidden'&&c.opacity>0.5&&c.display!=='none')return 1;}}return 0;};
+full();
+var key=H+'/'+B;if(window.__gbTimer!==key){window.__gbTimer=key;setTimeout(full,600);setTimeout(full,2000);}
+if(!window.__gbObs&&window.MutationObserver){var pend=[],tm=0;
+function flush(){tm=0;var p=pend;pend=[];for(var i=0;i<p.length;i++){var n=p[i];chk(n);
+if(n.__gbSub&&n.getElementsByTagName){var sub=n.getElementsByTagName('*');for(var j=0;j<sub.length&&j<400;j++)chk(sub[j]);}n.__gbSub=0;}}
+window.__gbObs=new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var m=ms[i];
+if(m.type==='childList'){for(var k=0;k<m.addedNodes.length;k++){var n=m.addedNodes[k];if(n.nodeType===1){n.__gbSub=1;pend.push(n);}}}
+else if(m.target.nodeType===1&&m.target.__gbT===undefined&&m.target.__gbBo===undefined){pend.push(m.target);}}
+if(!tm&&pend.length)tm=setTimeout(flush,180);});
+window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});}
+})();"""
     }
 
     /** Egy nézet tényleges (nagyítással, eltolással együtt számolt) helye a gyökérnézetben. */
@@ -1202,7 +1218,11 @@ class MainActivity : AppCompatActivity() {
             builtInZoomControls = true
             displayZoomControls = false
             userAgentString = if (desktop) desktopUa() else mobileChromeUa()
+            // gyorsabb, akadásmentes görgetés: a látható részen kívüli csempéket is előre kirajzolja
+            offscreenPreRaster = true
         }
+        // az aktív lap renderelője kapja a legnagyobb prioritást
+        wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
         if (Build.VERSION.SDK_INT >= 33) {
             // sötét témában a világos oldalakat is sötétíti
             wv.settings.setAlgorithmicDarkeningAllowed(prefs.getBoolean("dark_web", true))
@@ -1446,10 +1466,15 @@ class MainActivity : AppCompatActivity() {
                 if (docked && !dockTop) onDockScroll(scrollY, dy)
                 if (scrollY == 0 && oldScrollY > 0) probePadColor(tab, 120L)
                 // görgetés után újra megnézzük (rögzített fejléc csak görgetéskor jelenhet meg)
-                if (kotlin.math.abs(dy) > 0 && !padRecheckPending) {
-                    // görgetés közben is rendszeresen (a fejléc elrejtőzhet / előjöhet)
-                    padRecheckPending = true
-                    handler.postDelayed(padRecheck, 160L)
+                if (kotlin.math.abs(dy) > 0) {
+                    // görgetés közben is rendszeresen (a fejléc elrejtőzhet / előjöhet), és a
+                    // görgetés végén még egyszer (hogy a végső állapot biztosan jó legyen)
+                    if (!padRecheckPending) {
+                        padRecheckPending = true
+                        handler.postDelayed(padRecheck, 120L)
+                    }
+                    handler.removeCallbacks(padTrail)
+                    handler.postDelayed(padTrail, 260L)
                 }
                 onTranslateScroll(dy)
                 updateTopFade(scrollY)
@@ -2375,6 +2400,10 @@ class MainActivity : AppCompatActivity() {
      * kitöltéséhez. Így nem nyúlnak fel az ikonok és a fejléc elemei az állapotsor mögé.
      */
     private var padRecheckPending = false
+    private val padTrail = Runnable {
+        activeTab?.let { probePadColor(it, 0L) }
+        probeStatusBand()
+    }
     private val padRecheck = Runnable {
         padRecheckPending = false
         activeTab?.let { probePadColor(it, 0L) }
@@ -5001,17 +5030,20 @@ function hasContent(e){if(!e)return false;var t=(e.innerText||'').replace(/\s+/g
 if(t.length>24)return true;var m=e.querySelectorAll('img,video,canvas,svg,input,button,a[href]');
 for(var i=0;i<m.length;i++){var x=m[i];if(x.offsetWidth>40&&x.offsetHeight>40&&x.tagName!=='A')return true;if(x.tagName==='A'&&(x.innerText||'').trim().length>3)return true;}return false;}
 function collapse(e){e.style.setProperty('display','none','important');}
-function scan(){var all=document.body?document.body.getElementsByTagName('*'):[];
-for(var i=0;i<all.length;i++){var e=all[i];if(e.__gAd)continue;
+function scanEl(e){if(e.__gAd)return;
 if(e.children.length<=2){var tx=(e.textContent||'').trim();if(tx.length<20&&LABEL.test(tx)){e.__gAd=1;
 var p=e.parentElement,best=e;for(var k=0;k<3&&p&&p!==document.body;k++){var clone=(p.innerText||'').replace(tx,'').trim();
 if(clone.length<4&&p.offsetHeight<innerHeight*0.9){best=p;p=p.parentElement;}else break;}
-collapse(best);var n=best.nextElementSibling;if(n&&!hasContent(n)&&n.offsetHeight>30)collapse(n);continue;}}
+collapse(best);var n=best.nextElementSibling;if(n&&!hasContent(n)&&n.offsetHeight>30)collapse(n);return;}}
 var tag=e.tagName;if((tag==='DIV'||tag==='SECTION'||tag==='ASIDE')&&e.offsetHeight>60){
 var fr=e.querySelector('iframe,ins');if(fr&&!hasContent(e)){var src=(fr.src||'')+(fr.id||'')+(fr.className||'');
-if(/ad|google|doubleclick|syndication|banner|sponsor/i.test(src)||fr.offsetHeight<4){e.__gAd=1;collapse(e);}}}}}
-scan();var tm=0;new MutationObserver(function(){if(tm)return;tm=setTimeout(function(){tm=0;scan();},700);})
-.observe(document.documentElement,{childList:true,subtree:true});setTimeout(scan,1500);setTimeout(scan,4000);
+if(/ad|google|doubleclick|syndication|banner|sponsor/i.test(src)||fr.offsetHeight<4){e.__gAd=1;collapse(e);}}}}
+function scan(root){var all=(root||document.body);if(!all)return;scanEl(all);all=all.getElementsByTagName?all.getElementsByTagName('*'):[];
+for(var i=0;i<all.length;i++)scanEl(all[i]);}
+scan();var pend=[],tm=0;new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var a=ms[i].addedNodes;
+for(var k=0;k<a.length;k++)if(a[k].nodeType===1)pend.push(a[k]);}
+if(!tm&&pend.length)tm=setTimeout(function(){tm=0;var p=pend;pend=[];for(var i=0;i<p.length&&i<200;i++)scan(p[i]);},700);})
+.observe(document.documentElement,{childList:true,subtree:true});setTimeout(function(){scan();},1500);setTimeout(function(){scan();},4000);
 })()"""
 
         const val SPACER_JS =

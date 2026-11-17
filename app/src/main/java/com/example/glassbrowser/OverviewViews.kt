@@ -57,9 +57,27 @@ class HeroView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * Ha meg van adva, a kép nem egyenesen repül a kártyára, hanem egy ívben ezen a téglalapon át
+     * (pl. a képernyő közepén át, mint a Safariban a felfelé legyintéskor).
+     */
+    var via: RectF? = null
+
     override fun onDraw(canvas: Canvas) {
         val f = progress
-        dst.set(
+        val v = via
+        if (v != null) {
+            // másodfokú Bézier-ív: teljes kép -> közép -> kártya
+            val a = (1f - f) * (1f - f)
+            val b = 2f * (1f - f) * f
+            val c = f * f
+            dst.set(
+                a * full.left + b * v.left + c * card.left,
+                a * full.top + b * v.top + c * card.top,
+                a * full.right + b * v.right + c * card.right,
+                a * full.bottom + b * v.bottom + c * card.bottom
+            )
+        } else dst.set(
             full.left + (card.left - full.left) * f,
             full.top + (card.top - full.top) * f,
             full.right + (card.right - full.right) * f,

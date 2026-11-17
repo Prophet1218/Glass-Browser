@@ -706,12 +706,16 @@ class MainActivity : AppCompatActivity() {
             // bezárása után egy pillanatra szürke sáv villanna az állapotsor mögött)
             l.setPadColor(activeTab?.padColor ?: 0)
             val searchVis = if (searchPage.visibility == View.VISIBLE) searchPage.alpha else 0f
-            val ovVis = if (overview.visibility == View.VISIBLE && overviewShown) overview.alpha * tabList.alpha else 0f
+            // lapváltó: csak görgetés közben kapcsol be, a görgetéssel együtt erősödik
+            val ovScroll = (tabList.computeVerticalScrollOffset() / (48f * d)).coerceIn(0f, 1f)
+            val ovVis = if (overview.visibility == View.VISIBLE && overviewShown) {
+                overview.alpha * tabList.alpha * ovScroll
+            } else 0f
             if (searchVis <= 0.01f && ovVis > 0.01f) {
-                // lapváltó: görgetéskor a kártyák az állapotsor alatt elmosódva úsznak ki
-                val tint = Color.argb((70 * ovVis).toInt(), 10, 12, 16)
+                // a kártyák az állapotsor alatt lágy, hosszú átmenettel mosódnak el
+                val tint = Color.argb((60 * ovVis).toInt(), 10, 12, 16)
                 l.setFlow(0f, 0f, 0f, 0)
-                l.setTop(statusTop + 6f * d, 26f * d, 14f * d * ovVis, tint, 0f, true, hardEdge = true)
+                l.setTop(statusTop.toFloat(), 64f * d, 14f * d * ovVis, tint, 0f, true)
             } else if (searchVis > 0.01f) {
                 // Kereső felület: a fülek sávja mögé görgetett szöveg (és az állapotsor mögötti rész)
                 // elmosódik, lefelé lágyan elhalványuló átmenettel.
@@ -1186,6 +1190,11 @@ class MainActivity : AppCompatActivity() {
         // A kezdőlapon a hosszú nyomás csak a csempe szerkesztőjét nyitja meg: a WebView saját
         // reakciója (a link "kiemelése", húzása, szövegkijelölés) itt ki van kapcsolva.
         wv.setOnLongClickListener { Urls.isStart(wv.url.orEmpty()) }
+        // letöltések: a rendszer letöltéskezelője tölti le a Letöltések mappába
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
+            val ok = Downloads.start(applicationContext, url, userAgent, contentDisposition, mimetype)
+            showCopyToast(if (ok) L.t("Letöltés elindult") else L.t("Ez a letöltés nem támogatott"))
+        }
         wv.onInsetChanged = { if (tab === activeTab) updateLens() }
         wv.onPull = { dist -> if (tab === activeTab) showPull(dist) }
         wv.onPullRelease = { dist ->
@@ -1248,6 +1257,7 @@ class MainActivity : AppCompatActivity() {
                 // amint az új oldal megjelenik, megkapja a felső térközt (ne ugorjon később)
                 view?.evaluateJavascript(topPadJs(), null)
                 probePadColor(tab, 250L)
+                if (AdBlock.enabled) view?.evaluateJavascript(AD_COSMETIC_JS, null)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -1282,6 +1292,7 @@ class MainActivity : AppCompatActivity() {
                 if (Urls.isStart(url.orEmpty())) view?.evaluateJavascript(startPageJs(), null)
                 probePadColor(tab, 300L)
                 probePadColor(tab, 1500L)
+                if (AdBlock.enabled) view?.evaluateJavascript(AD_COSMETIC_JS, null)
                 if (tab === activeTab && view != null) offerTranslate(tab, view)
                 if (tab === activeTab) syncUi()
             }
@@ -1318,6 +1329,7 @@ class MainActivity : AppCompatActivity() {
                     dy < -6 -> setCollapsed(false)
                 }
                 if (docked && !dockTop) onDockScroll(scrollY, dy)
+                if (scrollY == 0 && oldScrollY > 0) probePadColor(tab, 120L)
                 onTranslateScroll(dy)
                 updateTopFade(scrollY)
             }
@@ -1885,8 +1897,61 @@ class MainActivity : AppCompatActivity() {
         return RectF(l, t, l + card.width, t + card.height)
     }
 
+    /** Igaz, ha a lapváltó a keresősávon felfelé legyintéssel nyílt (a kép a közepen át repül). */
+    private var overviewViaCenter = false
+
+    private var swipeStartY = -1f
+    private var swipeStartX = 0f
+    private var swipeConsumed = false
+
+    /** Felfelé legyintés a keresősávon: megnyílik a lapváltó (mint az iOS Safariban). */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeConsumed = false
+                swipeStartY = -1f
+                if (!overviewShown && !overviewBusy && !searchShown && !menuVisible && !urlField.hasFocus()) {
+                    visualRect(barRow, tmpRect)
+                    if (tmpRect.contains(ev.x, ev.y)) {
+                        swipeStartY = ev.y
+                        swipeStartX = ev.x
+                    }
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (swipeStartY >= 0f && !swipeConsumed) {
+                    val dy = swipeStartY - ev.y
+                    val dx = kotlin.math.abs(ev.x - swipeStartX)
+                    if (dy > dp(36) && dy > dx * 1.4f) {
+                        swipeConsumed = true
+                        // a sáv gombjai ne kapják meg a felengedést
+                        val cancel = MotionEvent.obtain(ev)
+                        cancel.action = MotionEvent.ACTION_CANCEL
+                        super.dispatchTouchEvent(cancel)
+                        cancel.recycle()
+                        haptic()
+                        overviewViaCenter = true
+                        showOverview()
+                        return true
+                    }
+                }
+            }
+        }
+        if (swipeConsumed) {
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+                swipeConsumed = false
+                swipeStartY = -1f
+            }
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     private fun showOverview() {
-        if (overviewShown || overviewBusy) return
+        if (overviewShown || overviewBusy) {
+            overviewViaCenter = false
+            return
+        }
         val tab = activeTab ?: return
         hideTranslateBar()
         showDock(animate = false)
@@ -2092,16 +2157,57 @@ class MainActivity : AppCompatActivity() {
      * Az oldal fejlécének háttérszíne (CSS-ből), az állapotsor mögötti térköz egyszínű
      * kitöltéséhez. Így nem nyúlnak fel az ikonok és a fejléc elemei az állapotsor mögé.
      */
+    private val padProbe: Bitmap = Bitmap.createBitmap(96, 1, Bitmap.Config.ARGB_8888)
+    private val padPixels = IntArray(96)
+
+    /**
+     * A fejléc színe a valóban kirajzolt képből (közvetlenül az állapotsor alatti sorból): a
+     * leggyakoribb szín, így az ikonok nem számítanak bele. (A CSS-ben megadott szín sötétített
+     * oldalaknál félrevezető, attól lett fehér a sáv.)
+     */
     private fun probePadColor(tab: Tab, delay: Long) {
         if (!flowLayout()) return
         handler.postDelayed({
-            if (tab.webView.visibility != View.VISIBLE && tab !== activeTab) return@postDelayed
-            tab.webView.evaluateJavascript(PAD_COLOR_JS) { res ->
-                val c = parseCssColor(res?.trim('"').orEmpty())
-                if (c != tab.padColor) {
-                    tab.padColor = c
-                    if (tab === activeTab) updateLens()
-                }
+            val wv = tab.webView
+            if (tab !== activeTab || wv.scrollY != 0 || overviewShown || searchShown || capturing) return@postDelayed
+            val w = scene.width
+            val y = statusTop + dp(2)
+            if (w <= 0 || y + 1 >= scene.height) return@postDelayed
+            try {
+                PixelCopy.request(window, Rect(0, y, w, y + 1), padProbe, { result ->
+                    if (result != PixelCopy.SUCCESS || tab !== activeTab) return@request
+                    padProbe.getPixels(padPixels, 0, 96, 0, 0, 96, 1)
+                    val counts = HashMap<Int, Int>()
+                    for (px in padPixels) {
+                        val key = ((Color.red(px) shr 3) shl 10) or ((Color.green(px) shr 3) shl 5) or (Color.blue(px) shr 3)
+                        counts[key] = (counts[key] ?: 0) + 1
+                    }
+                    val best = counts.maxByOrNull { it.value } ?: return@request
+                    val c = if (best.value >= 96 * 0.45f) {
+                        var r = 0
+                        var g = 0
+                        var b = 0
+                        var n = 0
+                        for (px in padPixels) {
+                            val key = ((Color.red(px) shr 3) shl 10) or ((Color.green(px) shr 3) shl 5) or (Color.blue(px) shr 3)
+                            if (key == best.key) {
+                                r += Color.red(px)
+                                g += Color.green(px)
+                                b += Color.blue(px)
+                                n++
+                            }
+                        }
+                        Color.rgb(r / n, g / n, b / n)
+                    } else {
+                        0
+                    }
+                    if (c != tab.padColor) {
+                        tab.padColor = c
+                        updateLens()
+                    }
+                }, handler)
+            } catch (e: Exception) {
+                // marad az eddigi
             }
         }, delay)
     }
@@ -2251,6 +2357,15 @@ class MainActivity : AppCompatActivity() {
             heroTab = tab
             cardView(tab)?.alpha = 0f
             hero.setup(tab.thumbnail, webRect(), card, screenRadius, dp(22).toFloat(), bgColor)
+            // felfelé legyintésnél a kép előbb a képernyő közepére húzódik, onnan úszik a helyére
+            hero.via = if (opening && overviewViaCenter) {
+                val cw = card.width() * 1.18f
+                val ch = card.height() * 1.18f
+                val cx = scene.width / 2f
+                val cy = scene.height * 0.46f
+                RectF(cx - cw / 2f, cy - ch / 2f, cx + cw / 2f, cy + ch / 2f)
+            } else null
+            overviewViaCenter = false
             hero.progress = if (opening) 0f else 1f
             heroHold++
             hero.animate().cancel()
@@ -2266,7 +2381,7 @@ class MainActivity : AppCompatActivity() {
         }
         val anim = if (opening) ValueAnimator.ofFloat(0f, 1f) else ValueAnimator.ofFloat(1f, 0f)
         // hosszabb, lágyan lassuló mozgás (nem "csapódik" a helyére)
-        anim.duration = if (opening) 520L else 480L
+        anim.duration = if (opening) (if (hero.via != null) 600L else 520L) else 480L
         anim.interpolator = if (opening) {
             android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
         } else {
@@ -3289,7 +3404,7 @@ class MainActivity : AppCompatActivity() {
     private var copyToast: TextView? = null
 
     /** Kis üvegkapszula a sáv fölött: "Vágólapra másolva", rugózva jelenik meg és tűnik el. */
-    private fun showCopyToast() {
+    private fun showCopyToast(message: String = L.t("Vágólapra másolva")) {
         val tv = copyToast ?: TextView(this).also { t ->
             t.text = L.t("Vágólapra másolva")
             t.textSize = 14.5f
@@ -3307,7 +3422,7 @@ class MainActivity : AppCompatActivity() {
             t.visibility = View.GONE
             copyToast = t
         }
-        tv.text = L.t("Vágólapra másolva")
+        tv.text = message
         val col = menuTextColor()
         tv.setTextColor(col)
         tv.compoundDrawableTintList = ColorStateList.valueOf(col)
@@ -3679,7 +3794,17 @@ class MainActivity : AppCompatActivity() {
         b.contentDescription = L.t("Privát böngészés")
         b.visibility = View.INVISIBLE
         b.alpha = 0f
-        b.setOnClickListener { setPrivateMode(!privateMode) }
+        b.setOnClickListener {
+            // a gomb összehúzódik, majd rugózva visszaugrik, közben vált a kitöltése
+            b.animate().cancel()
+            b.animate().scaleX(0.6f).scaleY(0.6f).rotation(if (privateMode) 0f else -12f).setDuration(110)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    setPrivateMode(!privateMode)
+                    b.animate().scaleX(1f).scaleY(1f).rotation(0f).setDuration(420)
+                        .setInterpolator(OvershootInterpolator(3f)).start()
+                }.start()
+        }
         val lp = FrameLayout.LayoutParams(dp(38), dp(38))
         lp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
         lp.marginStart = dp(7)
@@ -3688,7 +3813,21 @@ class MainActivity : AppCompatActivity() {
         updatePrivateUi()
     }
 
-    private fun updatePrivateUi() {
+    /** A kapszula felirata kicserélődik: a régi felfelé úszik ki, az új alulról be. */
+    private fun animateOverviewLabel() {
+        val v = overviewLabel
+        v.animate().cancel()
+        v.animate().alpha(0f).translationY(-dp(10).toFloat()).setDuration(120)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                updateTabCount()
+                v.translationY = dp(12).toFloat()
+                v.animate().alpha(1f).translationY(0f).setDuration(300)
+                    .setInterpolator(OvershootInterpolator(1.6f)).start()
+            }.start()
+    }
+
+    private fun updatePrivateUi(animateLabel: Boolean = false) {
         if (!::privateBtn.isInitialized) return
         val c = contentColor ?: Color.WHITE
         if (privateMode) {
@@ -3702,7 +3841,7 @@ class MainActivity : AppCompatActivity() {
             privateBtn.background = null
             privateBtn.imageTintList = ColorStateList.valueOf(c)
         }
-        updateTabCount()
+        if (animateLabel && barOverview) animateOverviewLabel() else updateTabCount()
     }
 
     /** Váltás a normál és a privát lapok között (a lapváltóban a rács átúszik). */
@@ -3712,7 +3851,7 @@ class MainActivity : AppCompatActivity() {
         if (on) normalActive = activeTab else privateActive = activeTab
         privateMode = on
         tabs = if (on) privateTabs else normalTabs
-        updatePrivateUi()
+        updatePrivateUi(animateLabel = true)
         if (tabs.isEmpty()) {
             // első privát lap: egy új kezdőlap nyílik
             val t = createTab()
@@ -3841,6 +3980,9 @@ class MainActivity : AppCompatActivity() {
             canMark, icon = R.drawable.ic_m_translate
         ) {
             if (translated) undoTranslate() else startTranslate()
+        }
+        menuRow(L.t("Letöltések"), icon = R.drawable.ic_m_download) {
+            startActivity(Intent(this, DownloadsActivity::class.java))
         }
         val desktop = prefs.getBoolean("desktop_mode", false)
         menuRow(L.t("Asztali oldal"), icon = R.drawable.ic_m_desktop, check = desktop) {
@@ -4596,6 +4738,36 @@ var h=getComputedStyle(document.documentElement).backgroundColor;return clear(h)
 var xs=[3,innerWidth/2,innerWidth-4];var r=null;
 for(var i=0;i<xs.length;i++){var c=bg(document.elementFromPoint(xs[i],y));if(!c)return '';if(r===null)r=c;else if(r!==c)return '';}
 return r||'';})()"""
+
+        /**
+         * Reklámblokkoló, látható rész: a hirdetések helye is eltűnik (nem marad üres doboz).
+         * Ismert hirdetéselemek elrejtése, valamint a "Hirdetés / Advertisement" feliratú, tartalom
+         * nélküli dobozok összecsukása. Az oldal változásait is figyeli.
+         */
+        const val AD_COSMETIC_JS = """(function(){
+if(window.__glassAds)return;window.__glassAds=1;
+var css='ins.adsbygoogle,.adsbygoogle,[id^="google_ads_iframe"],[id^="div-gpt-ad"],[id^="gpt-ad"],[data-ad-slot],[data-ad-unit],[data-adunit],[data-google-query-id],'+
+'iframe[src*="doubleclick.net"],iframe[src*="googlesyndication"],iframe[id^="google_ads"],.ad-slot,.ad-container,.ad-wrapper,.ad-unit,.ad-banner,.adbox,.advert,.advertisement,'+
+'.sponsored-ad,amp-ad,.ains,.gemini-ad,[aria-label="Advertisement"],[aria-label="Hirdetés"]'+
+'{display:none!important;min-height:0!important;height:0!important;margin:0!important;padding:0!important}';
+var st=document.createElement('style');st.textContent=css;(document.head||document.documentElement).appendChild(st);
+var LABEL=/^(advertisement|advertisements|ad|ads|hirdetés|reklám|sponsored|szponzorált|anzeige|publicité|publicidad)$/i;
+function hasContent(e){if(!e)return false;var t=(e.innerText||'').replace(/\s+/g,' ').trim();
+if(t.length>24)return true;var m=e.querySelectorAll('img,video,canvas,svg,input,button,a[href]');
+for(var i=0;i<m.length;i++){var x=m[i];if(x.offsetWidth>40&&x.offsetHeight>40&&x.tagName!=='A')return true;if(x.tagName==='A'&&(x.innerText||'').trim().length>3)return true;}return false;}
+function collapse(e){e.style.setProperty('display','none','important');}
+function scan(){var all=document.body?document.body.getElementsByTagName('*'):[];
+for(var i=0;i<all.length;i++){var e=all[i];if(e.__gAd)continue;
+if(e.children.length<=2){var tx=(e.textContent||'').trim();if(tx.length<20&&LABEL.test(tx)){e.__gAd=1;
+var p=e.parentElement,best=e;for(var k=0;k<3&&p&&p!==document.body;k++){var clone=(p.innerText||'').replace(tx,'').trim();
+if(clone.length<4&&p.offsetHeight<innerHeight*0.9){best=p;p=p.parentElement;}else break;}
+collapse(best);var n=best.nextElementSibling;if(n&&!hasContent(n)&&n.offsetHeight>30)collapse(n);continue;}}
+var tag=e.tagName;if((tag==='DIV'||tag==='SECTION'||tag==='ASIDE')&&e.offsetHeight>60){
+var fr=e.querySelector('iframe,ins');if(fr&&!hasContent(e)){var src=(fr.src||'')+(fr.id||'')+(fr.className||'');
+if(/ad|google|doubleclick|syndication|banner|sponsor/i.test(src)||fr.offsetHeight<4){e.__gAd=1;collapse(e);}}}}}
+scan();var tm=0;new MutationObserver(function(){if(tm)return;tm=setTimeout(function(){tm=0;scan();},700);})
+.observe(document.documentElement,{childList:true,subtree:true});setTimeout(scan,1500);setTimeout(scan,4000);
+})()"""
 
         const val SPACER_JS =
             "(function(){if(document.getElementById('__glass_spacer'))return;" +

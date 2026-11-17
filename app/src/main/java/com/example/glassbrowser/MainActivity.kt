@@ -390,6 +390,8 @@ class MainActivity : AppCompatActivity() {
         setupSearchPage()
 
         barRow.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateLens() }
+        // az összegyűjtött üveg-frissítések a kirajzolás előtt, egyszer futnak le (lásd updateLens)
+        scene.viewTreeObserver.addOnPreDrawListener(lensPreDraw)
         applyContentColor(!night)
     }
 
@@ -668,7 +670,14 @@ class MainActivity : AppCompatActivity() {
         // A WebView maga nem mozog (attól akadt és villant a kép): átúszó módban az OLDAL kap
         // felül térközt, lásd topPadJs.
         wv.topInset = 0
-        wv.evaluateJavascript(topPadJs(), null)
+        // Ugyanazt a szkriptet nem futtatjuk újra (pl. minden billentyűzet-nyitáskor az összes lapon):
+        // az oldal teljes bejárása a közös renderelő szálon akadást okozna. Új oldalnál
+        // (onPageStarted) a jegyzet törlődik, és a betöltéskor úgyis lefut.
+        val js = topPadJs()
+        if (wv.appliedPadJs != js) {
+            wv.appliedPadJs = js
+            wv.evaluateJavascript(js, null)
+        }
     }
 
     /**
@@ -724,11 +733,11 @@ if(!t.clientHeight||t.clientHeight<innerHeight*0.6)return;lt=t;if(raf)return;
 raf=requestAnimationFrame(function(){raf=0;var y=Math.round(lt.scrollTop||0);if(y!==ly){ly=y;GlassScroll.inner(y);}});},true);}
 var key=H+'/'+B;if(window.__gbTimer!==key){window.__gbTimer=key;setTimeout(full,600);setTimeout(full,2000);}
 if(!window.__gbObs&&window.MutationObserver){var pend=[],tm=0;
-function flush(){tm=0;var p=pend;pend=[];for(var i=0;i<p.length;i++){var n=p[i];chk(n);
+function flush(){tm=0;var p=pend;pend=[];for(var i=0;i<p.length;i++){var n=p[i];n.__gbQ=0;chk(n);
 if(n.__gbSub&&n.getElementsByTagName){var sub=n.getElementsByTagName('*');for(var j=0;j<sub.length&&j<400;j++)chk(sub[j]);}n.__gbSub=0;}}
 window.__gbObs=new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var m=ms[i];
-if(m.type==='childList'){for(var k=0;k<m.addedNodes.length;k++){var n=m.addedNodes[k];if(n.nodeType===1){n.__gbSub=1;pend.push(n);}}}
-else if(m.target.nodeType===1&&m.target.__gbT===undefined&&m.target.__gbBo===undefined){pend.push(m.target);}}
+if(m.type==='childList'){for(var k=0;k<m.addedNodes.length;k++){var n=m.addedNodes[k];if(n.nodeType===1){n.__gbSub=1;if(!n.__gbQ){n.__gbQ=1;pend.push(n);}}}}
+else if(m.target.nodeType===1&&!m.target.__gbQ&&m.target.__gbT===undefined&&m.target.__gbBo===undefined){m.target.__gbQ=1;pend.push(m.target);}}
 if(!tm&&pend.length)tm=setTimeout(flush,180);});
 window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});}
 })();"""
@@ -761,8 +770,46 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         )
     }
 
-    /** Megadja a shadernek, hol vannak éppen az üvegfelületek, és milyen a felső elmosás. */
+    // ---- az üveg frissítése képkockánként legfeljebb egyszer
+    /** Kérték az üveg frissítését; a következő kirajzolás előtt (onPreDraw) egyszer fut le. */
+    private var lensUpdatePending = false
+    /** Igaz az onPreDraw után, a kirajzolás végéig: ilyenkor a kérés azonnal lefut (ugyanebben a képkockában). */
+    private var lensInDraw = false
+    private val lensDrawEnd = Runnable { lensInDraw = false }
+    private val lensPreDraw = android.view.ViewTreeObserver.OnPreDrawListener {
+        if (lensUpdatePending) {
+            lensUpdatePending = false
+            updateLensNow()
+        }
+        lensInDraw = true
+        // aszinkron üzenet: a képkocka (a rajzolás) után azonnal lefut, a szinkron gát sem tartja vissza
+        val m = android.os.Message.obtain(handler, lensDrawEnd)
+        m.isAsynchronous = true
+        handler.sendMessageAtFrontOfQueue(m)
+        true
+    }
+
+    /**
+     * Az üveg frissítését kéri. Egy képkockán belül sokszor is hívódhat (görgetés, több animáció,
+     * elrendezés-figyelők): a számítás és a RenderEffect újraépítése mégis csak egyszer fut, közvetlenül
+     * a kirajzolás előtt, amikor már minden nézet a végső helyén van (így az üveg sem késik egy
+     * képkockát). Ha a kérés a kirajzolás közben érkezik (pl. a WebView görgetése), azonnal lefut.
+     */
     private fun updateLens() {
+        if (!lensActive || Build.VERSION.SDK_INT < 33) return
+        if (lensInDraw) {
+            updateLensNow()
+            return
+        }
+        if (!lensUpdatePending) {
+            lensUpdatePending = true
+            // biztosan legyen kirajzolás (és így onPreDraw), akkor is, ha más nem változott
+            scene.invalidate()
+        }
+    }
+
+    /** Megadja a shadernek, hol vannak éppen az üvegfelületek, és milyen a felső elmosás. */
+    private fun updateLensNow() {
         if (!lensActive || Build.VERSION.SDK_INT < 33) return
         val l = lens ?: return
         if (scene.width <= 0 || scene.height <= 0) return
@@ -1038,6 +1085,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      */
     private fun sampleTopColor() {
         if (topProbeBusy || capturing || !topBlurOn || docked) return
+        // görgetés közben nem olvasunk vissza a képernyőről (a GPU-t terhelné); megáll -> következő ütem
+        if (android.os.SystemClock.uptimeMillis() - lastScrollAt < 300L) return
         val wv = activeWebView ?: return
         val w = scene.width
         val top = webTop().coerceAtLeast(0) + dp(1)
@@ -1057,7 +1106,11 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                             g += Color.green(p)
                             b += Color.blue(p)
                         }
-                        contentContainer.setBackgroundColor(Color.rgb(r / 8, g / 8, b / 8))
+                        // csak változáskor (különben fölöslegesen újrarajzolná a tartalom keretét)
+                        val col = Color.rgb(r / 8, g / 8, b / 8)
+                        if ((contentContainer.background as? android.graphics.drawable.ColorDrawable)?.color != col) {
+                            contentContainer.setBackgroundColor(col)
+                        }
                     }
                     topProbeBusy = false
                 },
@@ -1403,6 +1456,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tab.loading = true
                 tab.progress = 5
                 if (url != null) tab.url = url
+                wv.appliedPadJs = null
                 wv.resetInset()
                 tab.padColor = 0
                 tab.fixedHeader = false
@@ -1481,6 +1535,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 if (scrollY == 0 && oldScrollY > 0) probePadColor(tab, 120L)
                 // görgetés után újra megnézzük (rögzített fejléc csak görgetéskor jelenhet meg)
                 if (kotlin.math.abs(dy) > 0) {
+                    lastScrollAt = android.os.SystemClock.uptimeMillis()
                     // görgetés közben is rendszeresen (a fejléc elrejtőzhet / előjöhet), és a
                     // görgetés végén még egyszer (hogy a végső állapot biztosan jó legyen)
                     if (!padRecheckPending) {
@@ -2442,21 +2497,32 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * kitöltéséhez. Így nem nyúlnak fel az ikonok és a fejléc elemei az állapotsor mögé.
      */
     private var padRecheckPending = false
+    /** Az utolsó görgetés ideje (uptimeMillis): görgetés közben a ritkább mérések várnak. */
+    private var lastScrollAt = 0L
     private val padTrail = Runnable {
         activeTab?.let { probePadColor(it, 0L) }
         probeStatusBand()
     }
     private val padRecheck = Runnable {
         padRecheckPending = false
-        activeTab?.let {
-            probePadColor(it, 0L)
+        val t = activeTab
+        t?.let {
+            // Görgetés közben (az oldal tetejétől távol) a JS-lekérdezés eredményét semmi sem
+            // használná fel: ilyenkor kihagyjuk (a görgetés végén a padTrail úgyis megnézi).
+            if (effScroll(it) < statusTop || (it.fixedHeader && it.headerColor == 0)) probePadColor(it, 0L)
             handler.postDelayed({ probeHeaderConsistency(it) }, 40L)
         }
-        probeStatusBand()
+        // ismert színű rögzített fejlécnél az állapotsor mögött egyszínű kitöltés van: nincs mit mérni
+        if (t == null || !t.fixedHeader || t.headerColor == 0) probeStatusBand()
     }
 
     private val padProbe: Bitmap = Bitmap.createBitmap(96, 1, Bitmap.Config.ARGB_8888)
     private val padPixels = IntArray(96)
+    /** A sor színeinek megszámolásához (HashMap és dobozolás nélkül, nincs foglalás méréskor). */
+    private val padKeys = IntArray(96)
+    private val padCounts = IntArray(96)
+    /** Egyszerre csak egy mérés használja a [padProbe] képet. */
+    private var padProbeBusy = false
 
     /**
      * A fejléc színe a valóban kirajzolt képből (közvetlenül az állapotsor alatti sorból): a
@@ -2508,24 +2574,42 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             val w = scene.width
             val y = statusTop + dp(2)
             if (w <= 0 || y + 1 >= scene.height) return@run
+            // ne fusson egyszerre két mérés ugyanabba a képbe (a következő ütem úgyis megismétli)
+            if (padProbeBusy) return@run
+            padProbeBusy = true
             try {
                 PixelCopy.request(window, Rect(0, y, w, y + 1), padProbe, { result ->
+                    padProbeBusy = false
                     if (result != PixelCopy.SUCCESS || tab !== activeTab) return@request
                     padProbe.getPixels(padPixels, 0, 96, 0, 0, 96, 1)
-                    val counts = HashMap<Int, Int>()
+                    // a leggyakoribb szín (5 bites csatornákkal), foglalás nélkül
+                    var bestKey = -1
+                    var bestCount = 0
+                    var nk = 0
                     for (px in padPixels) {
                         val key = ((Color.red(px) shr 3) shl 10) or ((Color.green(px) shr 3) shl 5) or (Color.blue(px) shr 3)
-                        counts[key] = (counts[key] ?: 0) + 1
+                        var j = 0
+                        while (j < nk && padKeys[j] != key) j++
+                        if (j == nk) {
+                            padKeys[nk] = key
+                            padCounts[nk] = 0
+                            nk++
+                        }
+                        padCounts[j]++
+                        if (padCounts[j] > bestCount) {
+                            bestCount = padCounts[j]
+                            bestKey = key
+                        }
                     }
-                    val best = counts.maxByOrNull { it.value } ?: return@request
-                    val c = if (best.value >= 96 * 0.45f) {
+                    if (bestCount <= 0) return@request
+                    val c = if (bestCount >= 96 * 0.45f) {
                         var r = 0
                         var g = 0
                         var b = 0
                         var n = 0
                         for (px in padPixels) {
                             val key = ((Color.red(px) shr 3) shl 10) or ((Color.green(px) shr 3) shl 5) or (Color.blue(px) shr 3)
-                            if (key == best.key) {
+                            if (key == bestKey) {
                                 r += Color.red(px)
                                 g += Color.green(px)
                                 b += Color.blue(px)
@@ -2541,7 +2625,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                         // után is ugyanaz a szín van közvetlenül az állapotsor alatt, mint betöltéskor,
                         // akkor ott egy fejléc áll -> az állapotsor tömören ezt a színt kapja.
                         if (tab.fixedHeader || tab.noHeader) return@request
-                        val share = best.value / 96f
+                        val share = bestCount / 96f
                         if (c != 0 && share >= 0.75f && tab.padColor != 0 && colorClose(c, tab.padColor)) {
                             tab.hdrHits++
                             if (tab.hdrHits >= 3 && tab.maxScroll >= scene.height * 0.6f) {
@@ -2568,6 +2652,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 }, handler)
             } catch (e: Exception) {
                 // marad az eddigi
+                padProbeBusy = false
             }
         }
     }
@@ -2593,6 +2678,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 val dy = px - tab.innerScroll
                 tab.innerScroll = px
                 if (tab === activeTab && !overviewShown) {
+                    lastScrollAt = android.os.SystemClock.uptimeMillis()
                     updateTopFade(effScroll(tab))
                     if (docked && !dockTop) onDockScroll(effScroll(tab), dy)
                     onTranslateScroll(dy)
@@ -2808,8 +2894,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             }
             updateLens()
         }
+        // a kártyák rácsa az animáció alatt kész rétegként mozog / halványul (nem rajzolódik újra
+        // minden képkockában)
+        tabList.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         anim.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
+                tabList.setLayerType(View.LAYER_TYPE_NONE, null)
                 if (!opening && useHero && overviewAnim === anim) {
                     // a kép már pontosan a valódi oldal helyén van: a lapváltó finoman elhalványul
                     // alóla, majd a kép is eltűnik (a mögötte lévő oldal ugyanaz)

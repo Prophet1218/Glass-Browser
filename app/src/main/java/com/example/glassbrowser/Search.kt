@@ -238,6 +238,8 @@ object ThumbStore {
     fun save(context: Context, id: Long, bitmap: android.graphics.Bitmap) {
         val target = file(context, id)
         thread {
+            // háttérprioritás: a JPEG-tömörítés ne vegye el a CPU-t a lapváltó animációjától
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             try {
                 // kicsinyítve mentünk: a kártyához ennyi bőven elég
                 val w = 480

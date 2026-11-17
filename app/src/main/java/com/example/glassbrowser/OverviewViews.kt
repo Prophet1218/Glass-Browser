@@ -237,30 +237,53 @@ class GlowDrawable(private val density: Float) : android.graphics.drawable.Drawa
         if (!down && anim?.isRunning != true) invalidateSelf()
     }
 
+    // A színátmenetek egyszer készülnek (az origó körül, teljes erővel); képkockánként csak a vászon
+    // eltolása (az ujj helye) és a festék alfája (az erősség) változik: rajzoláskor nincs foglalás.
+    private var fillShader: android.graphics.RadialGradient? = null
+    private var rimShader: android.graphics.RadialGradient? = null
+    private var shaderColor = 0
+    private val pathBounds = android.graphics.Rect()
+
     override fun draw(canvas: Canvas) {
         if (level <= 0.01f) return
         val b = bounds
         if (b.isEmpty) return
         rect.set(b)
         val r = minOf(b.width(), b.height()) / 2f
-        path.reset()
-        path.addRoundRect(rect, r, r, android.graphics.Path.Direction.CW)
+        if (pathBounds != b || path.isEmpty) {
+            pathBounds.set(b)
+            path.reset()
+            path.addRoundRect(rect, r, r, android.graphics.Path.Direction.CW)
+        }
+        val radius = 70f * density
+        val rgb = color and 0x00FFFFFF
+        var fill = fillShader
+        var rimS = rimShader
+        if (fill == null || rimS == null || shaderColor != color) {
+            shaderColor = color
+            // a régi c0 / c1 / átlátszó megállók, 255-ös alfára vetítve (a festék alfája skáláz)
+            fill = android.graphics.RadialGradient(
+                0f, 0f, radius, intArrayOf(rgb or (255 shl 24), rgb or (85 shl 24), 0),
+                floatArrayOf(0f, 0.45f, 1f), android.graphics.Shader.TileMode.CLAMP
+            )
+            rimS = android.graphics.RadialGradient(
+                0f, 0f, radius * 1.6f, intArrayOf(rgb or (170 shl 24), 0),
+                null, android.graphics.Shader.TileMode.CLAMP
+            )
+            fillShader = fill
+            rimShader = rimS
+        }
         canvas.save()
         canvas.clipPath(path)
-        val radius = 70f * density
         val a = (90 * level).toInt().coerceIn(0, 255)
-        val c0 = (color and 0x00FFFFFF) or (a shl 24)
-        val c1 = (color and 0x00FFFFFF) or ((a / 3) shl 24)
-        paint.shader = android.graphics.RadialGradient(
-            x, y, radius, intArrayOf(c0, c1, 0), floatArrayOf(0f, 0.45f, 1f),
-            android.graphics.Shader.TileMode.CLAMP
-        )
+        // a fény középpontja az ujj helye: a vásznat toljuk el, nem a színátmenetet
+        canvas.translate(x, y)
+        rect.offset(-x, -y)
+        paint.alpha = a
+        paint.shader = fill
         canvas.drawRect(rect, paint)
         // vékony fényes perem az ujj közelében
-        paint.shader = android.graphics.RadialGradient(
-            x, y, radius * 1.6f, intArrayOf((color and 0x00FFFFFF) or ((a * 2 / 3) shl 24), 0),
-            null, android.graphics.Shader.TileMode.CLAMP
-        )
+        paint.shader = rimS
         paint.style = android.graphics.Paint.Style.STROKE
         paint.strokeWidth = 1.5f * density
         rect.inset(0.75f * density, 0.75f * density)

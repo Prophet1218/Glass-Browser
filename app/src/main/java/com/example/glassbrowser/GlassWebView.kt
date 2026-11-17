@@ -43,6 +43,9 @@ class GlassWebView(context: Context) : WebView(context) {
     /** Akkor hívódik, amikor a betét (a translationY) megváltozik. */
     var onInsetChanged: (() -> Unit)? = null
 
+    /** Az utoljára lefuttatott térköz-szkript (lásd MainActivity.applyWebTop); null = még nem / új oldal. */
+    var appliedPadJs: String? = null
+
     private var lastRawY = 0f
 
     /** Ennyi mozgást engedünk át a WebView-nak a betét csukódása közben (lásd lent). */

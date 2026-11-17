@@ -59,7 +59,7 @@ class GlassSpring(var stiffness: Float, var damping: Float) {
     var target = 0f
 
     fun step(dtSec: Float) {
-        var left = dtSec
+        var left = dtSec * AnimSpeed.factor
         val c = 2f * damping * kotlin.math.sqrt(stiffness)
         while (left > 0f) {
             val h = if (left > MAX_STEP) MAX_STEP else left

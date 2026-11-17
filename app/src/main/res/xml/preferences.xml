@@ -7,7 +7,6 @@
         app:iconSpaceReserved="false">
 
         <ListPreference
-            android:defaultValue="hu"
             android:entries="@array/language_names"
             android:entryValues="@array/language_values"
             android:key="app_language"
@@ -48,6 +47,16 @@
             android:title="Lap bezárási animációja"
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
+
+        <com.example.glassbrowser.GlassSeekBarPreference
+            android:defaultValue="100"
+            android:key="anim_speed"
+            android:max="200"
+            android:summary="100 = normál, kisebb = lassabb, nagyobb = gyorsabb"
+            android:title="Animációk sebessége"
+            app:iconSpaceReserved="false"
+            app:min="50"
+            app:showSeekBarValue="true" />
 
         <Preference
             android:key="app_icon"
@@ -274,7 +283,7 @@
             app:iconSpaceReserved="false" />
 
         <com.example.glassbrowser.GlassSwitchPreference
-            android:defaultValue="true"
+            android:defaultValue="false"
             android:key="glass_convex"
             android:summary="Az üvegfelületek domborúnak, vastagnak látszanak: fénycsillanás a peremen, erősebb fénytörés a széleken."
             android:title="Domború (3D) üveg"
@@ -338,7 +347,7 @@
 
         <Preference
             android:key="google_signin"
-            android:summary="Megnyitja a Google bejelentkezési oldalát egy új lapon. A bejelentkezés megmarad."
+            android:summary="Megnyitja a Google bejelentkezési oldalát itt, a beállításokban. A bejelentkezés megmarad."
             android:title="Bejelentkezés Google-fiókkal"
             app:iconSpaceReserved="false" />
 

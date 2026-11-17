@@ -60,7 +60,7 @@ class TabAdapter(
         holder.thumb.setImageBitmap(tab.thumbnail)
         // a bezáró gomb üvege a kártya képéből készül (nagyítva, elmosva)
         holder.closeGlass.convex = PreferenceManager.getDefaultSharedPreferences(holder.close.context)
-            .getBoolean("glass_convex", true)
+            .getBoolean("glass_convex", false)
         holder.closeGlass.setThumbnail(tab.thumbnail)
         val icon = tab.favicon
         if (icon != null && !start) {

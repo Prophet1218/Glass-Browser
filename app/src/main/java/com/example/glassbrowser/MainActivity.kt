@@ -428,10 +428,10 @@ class MainActivity : AppCompatActivity() {
         val disp = prefs.getInt("glass_dispersion", 0) / 100f
         val frost = mode == "frost"
         // domború (3D) üveg: fénycsillanás a peremen, erősebb fénytörés a széleken
-        val convexOn = prefs.getBoolean("glass_convex", true) && mode != "off"
+        val convexOn = prefs.getBoolean("glass_convex", false) && mode != "off"
         // a felugró ablakok üveglapja is domború (a következő megnyitott ablaktól)
         theme.applyStyle(
-            if (prefs.getBoolean("glass_convex", true)) R.style.GlassDialogs_Convex else R.style.GlassDialogs_Flat,
+            if (prefs.getBoolean("glass_convex", false)) R.style.GlassDialogs_Convex else R.style.GlassDialogs_Flat,
             true
         )
         lensBlur = if (frost) maxOf(blur * 2.4f, 16f * d) else blur
@@ -1481,6 +1481,16 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tab.noHeader = false
                 tab.hdrHits = 0
                 tab.maxScroll = 0
+                // a site whose header we already know: the status bar is solid right away
+                // (no late darkening while the header is re-detected on every page)
+                rememberedHeader(tab.url).let { c ->
+                    if (c != 0) {
+                        tab.fixedHeader = true
+                        tab.headerColor = c
+                        tab.padColor = c
+                        if (tab === activeTab) updateLens()
+                    }
+                }
                 tab.translated = false
                 tab.trPending = false
                 if (tab === activeTab) {
@@ -2856,6 +2866,23 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (t == null || !t.fixedHeader || t.headerColor == 0) probeStatusBand()
     }
 
+    /** Sites (host -> header color) whose fixed header was detected once. */
+    private val hdrHosts by lazy { getSharedPreferences("header_hosts", MODE_PRIVATE) }
+
+    private fun hostOf(url: String?): String =
+        try { Uri.parse(url.orEmpty()).host.orEmpty().removePrefix("www.") } catch (e: Exception) { "" }
+
+    private fun rememberedHeader(url: String?): Int {
+        val h = hostOf(url)
+        return if (h.isEmpty()) 0 else hdrHosts.getInt(h, 0)
+    }
+
+    private fun rememberHeader(tab: Tab, color: Int) {
+        if (tab.isPrivate || color == 0) return
+        val h = hostOf(tab.url)
+        if (h.isNotEmpty() && hdrHosts.getInt(h, 0) != color) hdrHosts.edit().putInt(h, color).apply()
+    }
+
     private val padProbe: Bitmap = Bitmap.createBitmap(96, 1, Bitmap.Config.ARGB_8888)
     private val padPixels = IntArray(96)
     /** A sor színeinek megszámolásához (HashMap és dobozolás nélkül, nincs foglalás méréskor). */
@@ -2968,9 +2995,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                         val share = bestCount / 96f
                         if (c != 0 && share >= 0.75f && tab.padColor != 0 && colorClose(c, tab.padColor)) {
                             tab.hdrHits++
-                            if (tab.hdrHits >= 3 && tab.maxScroll >= scene.height * 0.6f) {
+                            if (tab.hdrHits >= 2 && tab.maxScroll >= dp(140)) {
                                 tab.fixedHeader = true
                                 tab.headerColor = tab.padColor
+                                rememberHeader(tab, tab.headerColor)
                                 updateLens()
                             }
                         } else {
@@ -2982,6 +3010,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     if (header) {
                         if (c != 0 && c != tab.headerColor) {
                             tab.headerColor = c
+                            rememberHeader(tab, c)
                             updateLens()
                         }
                     } else if (c != tab.padColor) {

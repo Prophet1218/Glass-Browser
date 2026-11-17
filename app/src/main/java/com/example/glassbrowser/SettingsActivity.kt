@@ -113,7 +113,7 @@ class SettingsActivity : AppCompatActivity() {
         ThemeHelper.apply(PreferenceManager.getDefaultSharedPreferences(this))
         L.init(this)
         super.onCreate(savedInstanceState)
-        applyDialogStyle(PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", true))
+        applyDialogStyle(PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", false))
         WindowCompat.setDecorFitsSystemWindows(window, false)
         night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -137,10 +137,142 @@ class SettingsActivity : AppCompatActivity() {
                 .commit()
         }
         SliderGlass.host = { rect -> thumbGlass(rect) }
+        onBackPressedDispatcher.addCallback(this, webBack)
         commit()
     }
 
+    // ---------------------------------------------------------------- in-settings web page
+
+    private var webPage: FrameLayout? = null
+    private var webView: android.webkit.WebView? = null
+    private val webBack = object : androidx.activity.OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            val wv = webView
+            if (wv != null && wv.canGoBack()) wv.goBack() else closeWebPage()
+        }
+    }
+
+    /**
+     * Google account pages (sign-in, passwords, activity) open here, inside the settings, over the
+     * list, instead of in a new browser tab. They share the normal browsing cookies, so signing in
+     * here signs in the browser too.
+     */
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    fun openWebPage(url: String, title: String) {
+        if (webPage != null) return
+        val d = resources.displayMetrics.density
+        val root = settingsRoot as FrameLayout
+        val page = FrameLayout(this)
+        page.setBackgroundColor(if (night) Color.rgb(14, 16, 22) else Color.WHITE)
+        page.isClickable = true
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding((8 * d).toInt(), 0, (16 * d).toInt(), 0)
+        }
+        val back = android.widget.ImageButton(this).apply {
+            setImageResource(R.drawable.ic_back)
+            imageTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.settings_text))
+            background = null
+            contentDescription = L.t("Vissza")
+            setOnClickListener { closeWebPage() }
+        }
+        bar.addView(back, LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt()))
+        val tv = TextView(this).apply {
+            text = title
+            setTextColor(getColor(R.color.settings_text))
+            textSize = 20f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        bar.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = (6 * d).toInt()
+        })
+        val progress = View(this).apply { setBackgroundColor(Color.rgb(10, 132, 255)) }
+        val progressHost = FrameLayout(this)
+        progressHost.addView(progress, FrameLayout.LayoutParams(0, (2 * d).toInt()))
+        val wv = android.webkit.WebView(this)
+        wv.isVerticalScrollBarEnabled = false
+        wv.isHorizontalScrollBarEnabled = false
+        wv.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            setSupportMultipleWindows(false)
+            val base = android.webkit.WebSettings.getDefaultUserAgent(this@SettingsActivity)
+            userAgentString = base.replace("; wv", "").replace(Regex("Version/\\d+\\.\\d+\\s"), "")
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            wv.settings.setAlgorithmicDarkeningAllowed(
+                PreferenceManager.getDefaultSharedPreferences(this).getBoolean("dark_web", true)
+            )
+        }
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+        wv.webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView?,
+                request: android.webkit.WebResourceRequest?
+            ): Boolean {
+                val u = request?.url ?: return false
+                return u.scheme != "http" && u.scheme != "https"
+            }
+        }
+        wv.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
+                val w = progressHost.width
+                progress.layoutParams = progress.layoutParams.apply {
+                    width = if (newProgress >= 100) 0 else (w * newProgress / 100f).toInt()
+                }
+                progress.requestLayout()
+            }
+        }
+        HighRefresh.view(wv)
+        col.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (56 * d).toInt()))
+        col.addView(progressHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (2 * d).toInt()))
+        col.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        page.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(page) { v, ins ->
+            val b = ins.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.ime()
+            )
+            v.setPadding(0, b.top, 0, b.bottom)
+            ins
+        }
+        root.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        page.requestApplyInsets()
+        webPage = page
+        webView = wv
+        webBack.isEnabled = true
+        // slides in from the right, like a settings sub-page
+        page.translationX = root.width.toFloat().coerceAtLeast(1f)
+        page.animate().translationX(0f).setDuration(300L)
+            .setInterpolator(android.view.animation.PathInterpolator(0.2f, 0.9f, 0.25f, 1f))
+            .start()
+        wv.loadUrl(url)
+    }
+
+    fun closeWebPage() {
+        val page = webPage ?: return
+        val wv = webView
+        webPage = null
+        webView = null
+        webBack.isEnabled = false
+        CookieManager.getInstance().flush()
+        page.animate().translationX(settingsRoot.width.toFloat()).setDuration(260L)
+            .setInterpolator(android.view.animation.PathInterpolator(0.4f, 0f, 0.6f, 1f))
+            .withEndAction {
+                (settingsRoot as FrameLayout).removeView(page)
+                wv?.destroy()
+            }
+            .start()
+        (supportFragmentManager.findFragmentById(R.id.settingsContainer) as? SettingsFragment)?.updateGoogleStatus()
+    }
+
     override fun onDestroy() {
+        webView?.destroy()
+        webView = null
         SliderGlass.host = null
         super.onDestroy()
     }
@@ -177,7 +309,7 @@ class SettingsActivity : AppCompatActivity() {
                 lens = it
             }
             // domború (3D) üveg a csúszka kapszuláján is (a beállítás azonnal érvényes)
-            val convexOn = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", true)
+            val convexOn = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", false)
             l.setConvex(if (convexOn) 1f else 0f, if (convexOn) 1f else 0f)
             settingsRoot.getLocationInWindow(rootLoc)
             l.setSlot(
@@ -235,6 +367,16 @@ class SettingsFragment : PreferenceFragmentCompat() {
         L.prefs(preferenceScreen)
 
         // nyelvváltás: a beállítások képernyő azonnal az új nyelven jelenik meg
+        findPreference<SeekBarPreference>("anim_speed")?.setOnPreferenceChangeListener { _, v ->
+            AnimSpeed.apply(requireContext(), v as Int)
+            true
+        }
+        findPreference<ListPreference>("app_language")?.let {
+            // show the effective language (phone language by default) without saving it
+            it.isPersistent = false
+            it.value = L.code(requireContext())
+            it.isPersistent = true
+        }
         findPreference<ListPreference>("app_language")?.setOnPreferenceChangeListener { _, _ ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 L.init(act)
@@ -301,8 +443,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
             findPreference<SeekBarPreference>("glass_dispersion")?.value = 0
             findPreference<SeekBarPreference>("glass_dark")?.value = 0
             findPreference<SwitchPreference>("glass_rim")?.isChecked = true
-            findPreference<SwitchPreference>("glass_convex")?.isChecked = true
-            act.applyDialogStyle(true)
+            findPreference<SwitchPreference>("glass_convex")?.isChecked = false
+            act.applyDialogStyle(false)
             Toast.makeText(requireContext(), L.t("Üvegbeállítások visszaállítva"), Toast.LENGTH_SHORT).show()
             true
         }
@@ -450,11 +592,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
     }
 
     private fun openInBrowser(key: String, url: String) {
-        findPreference<Preference>(key)?.setOnPreferenceClickListener {
-            val act = requireActivity() as SettingsActivity
-            act.result.putExtra(SettingsActivity.EXTRA_OPEN_URL, url)
-            act.commit()
-            act.finish()
+        findPreference<Preference>(key)?.setOnPreferenceClickListener { pref ->
+            (requireActivity() as SettingsActivity).openWebPage(url, pref.title?.toString().orEmpty())
             true
         }
     }
@@ -604,7 +743,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
         cm.flush()
     }
 
-    private fun updateGoogleStatus() {
+    fun updateGoogleStatus() {
         val cookies = CookieManager.getInstance().getCookie("https://accounts.google.com").orEmpty()
         val signedIn = cookies.contains("SID=")
         findPreference<Preference>("google_status")?.summary =

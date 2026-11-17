@@ -11,6 +11,7 @@ import android.view.View
  */
 object HighRefresh {
     fun apply(a: Activity) {
+        AnimSpeed.apply(a)
         if (Build.VERSION.SDK_INT < 30) return
         try {
             val disp = a.display ?: return

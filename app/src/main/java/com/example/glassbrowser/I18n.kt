@@ -20,8 +20,18 @@ object L {
 
     /** A beállított nyelv betöltése ("app_language": "hu" vagy "en"). */
     fun init(ctx: Context) {
+        en = code(ctx) == "en"
+    }
+
+    /**
+     * The chosen language; until the user picks one it follows the phone's language: Hungarian
+     * phones get Hungarian, every other (unsupported) language falls back to English.
+     */
+    fun code(ctx: Context): String {
         val p = PreferenceManager.getDefaultSharedPreferences(ctx)
-        en = p.getString("app_language", "hu") == "en"
+        p.getString("app_language", null)?.let { if (it == "hu" || it == "en") return it }
+        val sys = android.content.res.Resources.getSystem().configuration.locales[0]?.language.orEmpty()
+        return if (sys == "hu") "hu" else "en"
     }
 
     /** A szöveg az aktuális nyelven (a forrás mindig a magyar szöveg). */
@@ -231,6 +241,10 @@ object L {
         "Bejelentkezés Google-fiókkal" to "Sign in with Google",
         "Megnyitja a Google bejelentkezési oldalát egy új lapon. A bejelentkezés megmarad." to
             "Opens the Google sign-in page in a new tab. You stay signed in.",
+        "Megnyitja a Google bejelentkezési oldalát itt, a beállításokban. A bejelentkezés megmarad." to
+            "Opens the Google sign-in page right here in the settings. You stay signed in.",
+        "Animációk sebessége" to "Animation speed",
+        "100 = normál, kisebb = lassabb, nagyobb = gyorsabb" to "100 = normal, lower = slower, higher = faster",
         "Be vagy jelentkezve a Google-fiókodba." to "You're signed in to your Google account.",
         "Nem vagy bejelentkezve." to "You're not signed in.",
         "Kijelentkezés" to "Sign out",

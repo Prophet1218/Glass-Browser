@@ -703,6 +703,10 @@ class MainActivity : AppCompatActivity() {
             "else if(cs.position==='fixed'&&r.height>0){var pt=parseFloat(cs.paddingTop)||0;e.__gbP=pt;e.__gbH=H;" +
             "e.style.setProperty('padding-top',(pt+H)+'px','important');}}}}" +
             "window.__gbHdr=hdr;}" +
+            // most éppen látszik-e rögzített fejléc az oldal tetején (görgetéskor elrejtőzhet)
+            "window.__gbHdrNow=function(){var all=d.body?d.body.getElementsByTagName('*'):[];" +
+            "for(var i=0;i<all.length;i++){var e=all[i];if(!e.__gbW)continue;var r=e.getBoundingClientRect();" +
+            "if(r.height>0&&r.top<=H+2&&r.bottom>H+8&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).opacity>0.5)return 1;}return 0;};" +
             "fix();if(H>0&&window.__gbTimer!==H){window.__gbTimer=H;setTimeout(fix,500);setTimeout(fix,1500);setTimeout(fix,4000);" +
             // később megjelenő rétegek, fejlécek is (pl. keresőmező megnyitása)
             "if(!window.__gbObs&&window.MutationObserver){var tm=0;window.__gbObs=new MutationObserver(function(){if(tm)return;" +
@@ -1043,22 +1047,43 @@ class MainActivity : AppCompatActivity() {
 
     /** Az állapotsor ikonjai a világos / sötét módot követik. */
     private var statusLightCache: Boolean? = null
+    /** Az állapotsor mögötti rész valóban világos-e (a kirajzolt képből mérve); null = nem tudjuk. */
+    private var statusBright: Boolean? = null
+    private val statusProbe: Bitmap = Bitmap.createBitmap(24, 2, Bitmap.Config.ARGB_8888)
+    private val statusPixels = IntArray(48)
+    private var statusProbeBusy = false
+
+    /** Megméri, milyen világos az állapotsor mögötti rész (fehér fejlécnél sötét ikonok kellenek). */
+    private fun probeStatusBand() {
+        if (statusProbeBusy || statusTop <= 0 || scene.width <= 0 || !flowLayout()) return
+        statusProbeBusy = true
+        try {
+            PixelCopy.request(window, Rect(0, 0, scene.width, statusTop), statusProbe, { result ->
+                statusProbeBusy = false
+                if (result != PixelCopy.SUCCESS) return@request
+                statusProbe.getPixels(statusPixels, 0, 24, 0, 0, 24, 2)
+                var sum = 0.0
+                for (px in statusPixels) sum += ColorUtils.calculateLuminance(px or (0xFF shl 24))
+                val lum = sum / statusPixels.size
+                val prev = statusBright
+                // hiszterézis: ne villogjon a határon
+                statusBright = if (prev == true) lum > 0.4 else lum > 0.55
+                syncStatusIcons()
+            }, handler)
+        } catch (e: Exception) {
+            statusProbeBusy = false
+        }
+    }
 
     /**
-     * Az állapotsor ikonjai: ha az oldal teteje (a térköz kitöltése) világos, sötét ikonok, ha
-     * sötét, világosak. Egyébként a világos / sötét mód szerint.
+     * Az állapotsor ikonjai: ha az oldal teteje világos (pl. fehér fejléc), sötét ikonok; ha
+     * görgetés közben sötét tartalom kerül mögé, világosak. Egyébként a világos / sötét mód szerint.
      */
     private fun syncStatusIcons() {
-        val tab = activeTab
-        val pc = tab?.padColor ?: 0
-        val atTop = (tab?.webView?.scrollY ?: 1) < statusTop
-        val light = if (flowLayout() && pc != 0 && tab?.fixedHeader != true && atTop &&
-            !overviewShown && !searchShown && contentContainer.scaleX > 0.999f
-        ) {
-            ColorUtils.calculateLuminance(pc) > 0.5
-        } else {
-            !night
-        }
+        val sb = statusBright
+        val light = if (flowLayout() && sb != null && !overviewShown && !searchShown &&
+            contentContainer.scaleX > 0.999f
+        ) sb else !night
         if (statusLightCache == light) return
         statusLightCache = light
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = light
@@ -1421,9 +1446,10 @@ class MainActivity : AppCompatActivity() {
                 if (docked && !dockTop) onDockScroll(scrollY, dy)
                 if (scrollY == 0 && oldScrollY > 0) probePadColor(tab, 120L)
                 // görgetés után újra megnézzük (rögzített fejléc csak görgetéskor jelenhet meg)
-                if (kotlin.math.abs(dy) > 0) {
-                    handler.removeCallbacks(padRecheck)
-                    handler.postDelayed(padRecheck, 350L)
+                if (kotlin.math.abs(dy) > 0 && !padRecheckPending) {
+                    // görgetés közben is rendszeresen (a fejléc elrejtőzhet / előjöhet)
+                    padRecheckPending = true
+                    handler.postDelayed(padRecheck, 160L)
                 }
                 onTranslateScroll(dy)
                 updateTopFade(scrollY)
@@ -1485,6 +1511,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectTab(tab: Tab, animate: Boolean = true) {
         hideTranslateBar()
+        if (tab !== activeTab) {
+            statusBright = null
+            handler.postDelayed({ probeStatusBand() }, 350L)
+        }
         showDock(animate = false)
         val old = activeTab
         val wv = tab.webView
@@ -1752,9 +1782,42 @@ class MainActivity : AppCompatActivity() {
         if (bmp != null) {
             tab.thumbnail = bmp
             snapshotFull = true
-            if (!tab.isPrivate) ThumbStore.save(applicationContext, tab.id, bmp)
-            shrinkOtherThumbnails(tab)
-            done()
+            // A WebView szoftveres rajzából kimaradnak a videók, animációk (ezért "tűnt el" a
+            // tartalom): a képernyőn látható részt ráolvassuk a képre (a keresősáv fölött).
+            val wv = tab.webView
+            val top = wv.top.coerceAtLeast(0)
+            val barTopY = (barRow.top + barRow.translationY).toInt() - dp(4)
+            val bottom = minOf(wv.bottom, if (dockTop) wv.bottom else barTopY).coerceAtMost(scene.height)
+            val finish = {
+                if (!tab.isPrivate) ThumbStore.save(applicationContext, tab.id, bmp)
+                shrinkOtherThumbnails(tab)
+                done()
+            }
+            if (bottom - top < dp(40) || wv.visibility != View.VISIBLE) {
+                finish()
+                return
+            }
+            try {
+                val part = Bitmap.createBitmap(
+                    (scene.width * 0.6f).toInt().coerceAtLeast(1),
+                    ((bottom - top) * 0.6f).toInt().coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888
+                )
+                PixelCopy.request(window, Rect(0, top, scene.width, bottom), part, { result ->
+                    if (result == PixelCopy.SUCCESS) {
+                        val c = Canvas(bmp)
+                        c.drawBitmap(
+                            part, null,
+                            RectF(0f, (top - wv.top) * 0.6f, bmp.width.toFloat(), (bottom - wv.top) * 0.6f),
+                            android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+                        )
+                    }
+                    part.recycle()
+                    finish()
+                }, handler)
+            } catch (e: Exception) {
+                finish()
+            }
             return
         }
         capturePixels(tab, 0.5f) {
@@ -2011,64 +2074,6 @@ class MainActivity : AppCompatActivity() {
      * zsugorodik és emelkedik, amíg nem engeded el. Elengedéskor (elég nagy húzásnál vagy gyors
      * legyintésnél) megnyílik a lapváltó, különben az oldal visszaugrik a helyére.
      */
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                swipeConsumed = false
-                swipeActive = false
-                swipeStartY = -1f
-                if (!overviewShown && !overviewBusy && !searchShown && !menuVisible && !urlField.hasFocus() &&
-                    activeWebView != null
-                ) {
-                    visualRect(barRow, tmpRect)
-                    if (tmpRect.contains(ev.x, ev.y)) {
-                        swipeStartY = ev.y
-                        swipeStartX = ev.x
-                        swipeVel?.recycle()
-                        swipeVel = android.view.VelocityTracker.obtain()
-                        swipeVel?.addMovement(ev)
-                    }
-                }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                swipeVel?.addMovement(ev)
-                if (swipeStartY >= 0f) {
-                    val dy = swipeStartY - ev.y
-                    val dx = kotlin.math.abs(ev.x - swipeStartX)
-                    if (!swipeActive && dy > dp(14) && dy > dx * 1.3f) {
-                        swipeActive = true
-                        swipeConsumed = true
-                        val cancel = MotionEvent.obtain(ev)
-                        cancel.action = MotionEvent.ACTION_CANCEL
-                        super.dispatchTouchEvent(cancel)
-                        cancel.recycle()
-                        startPageDrag()
-                    }
-                    if (swipeActive) {
-                        dragPage(dy.coerceAtLeast(0f), ev.x - swipeStartX)
-                        return true
-                    }
-                }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (swipeActive) {
-                    swipeVel?.addMovement(ev)
-                    swipeVel?.computeCurrentVelocity(1000)
-                    val vy = swipeVel?.yVelocity ?: 0f
-                    val dy = swipeStartY - ev.y
-                    swipeActive = false
-                    swipeStartY = -1f
-                    swipeConsumed = false
-                    endPageDrag(ev.actionMasked == MotionEvent.ACTION_UP && (dy > scene.height * 0.16f || vy < -1800f))
-                    return true
-                }
-                swipeStartY = -1f
-            }
-        }
-        if (swipeConsumed) return true
-        return super.dispatchTouchEvent(ev)
-    }
-
     private var dragProgress = 0f
 
     private fun startPageDrag() {
@@ -2369,7 +2374,12 @@ class MainActivity : AppCompatActivity() {
      * Az oldal fejlécének háttérszíne (CSS-ből), az állapotsor mögötti térköz egyszínű
      * kitöltéséhez. Így nem nyúlnak fel az ikonok és a fejléc elemei az állapotsor mögé.
      */
-    private val padRecheck = Runnable { activeTab?.let { probePadColor(it, 0L) } }
+    private var padRecheckPending = false
+    private val padRecheck = Runnable {
+        padRecheckPending = false
+        activeTab?.let { probePadColor(it, 0L) }
+        probeStatusBand()
+    }
 
     private val padProbe: Bitmap = Bitmap.createBitmap(96, 1, Bitmap.Config.ARGB_8888)
     private val padPixels = IntArray(96)
@@ -2385,8 +2395,8 @@ class MainActivity : AppCompatActivity() {
             val wv = tab.webView
             if (tab !== activeTab || overviewShown || searchShown || capturing) return@postDelayed
             // van-e az oldal tetején rögzített fejléc (a térköz-szkript jegyzi meg)
-            wv.evaluateJavascript("window.__gbHdr===1") { r ->
-                val h = r == "true"
+            wv.evaluateJavascript("window.__gbHdrNow?window.__gbHdrNow():0") { r ->
+                val h = r == "1"
                 if (h != tab.fixedHeader) {
                     tab.fixedHeader = h
                     if (tab === activeTab) updateLens()
@@ -2428,6 +2438,7 @@ class MainActivity : AppCompatActivity() {
                         tab.padColor = c
                         updateLens()
                     }
+                    handler.postDelayed({ probeStatusBand() }, 50L)
                 }, handler)
             } catch (e: Exception) {
                 // marad az eddigi

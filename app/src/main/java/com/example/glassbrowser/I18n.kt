@@ -258,6 +258,7 @@ object L {
         "Webcím kimásolva" to "Address copied",
         "Vágólapra másolva" to "Copied to clipboard",
         "Letöltések" to "Downloads",
+        "Mappa" to "Folder",
         "Letöltés elindult" to "Download started",
         "Ez a letöltés nem támogatott" to "This download isn't supported",
         "Letöltések mappa megnyitása" to "Open Downloads folder",

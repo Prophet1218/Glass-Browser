@@ -778,7 +778,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // (a térköz kitöltése akkor is él, ha az elmosás épp ki van halványítva: különben a lapváltó
             // bezárása után egy pillanatra szürke sáv villanna az állapotsor mögött)
             // rögzített fejlécnél élőben a fejléc felső sora nyúlik fel (görgetéskor is pontos)
-            l.setPadColor(if (activeTab?.fixedHeader == true) 0 else activeTab?.padColor ?: 0)
+            // rögzített fejlécnél a fejléc (görgetéskor is megmaradó) tömör színe
+            l.setPadColor(
+                if (activeTab?.fixedHeader == true) activeTab?.headerColor ?: 0 else activeTab?.padColor ?: 0
+            )
             syncStatusIcons()
             val searchVis = if (searchPage.visibility == View.VISIBLE) searchPage.alpha else 0f
             // lapváltó: csak görgetés közben kapcsol be, a görgetéssel együtt erősödik
@@ -1397,6 +1400,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 wv.resetInset()
                 tab.padColor = 0
                 tab.fixedHeader = false
+                tab.headerColor = 0
                 tab.translated = false
                 tab.trPending = false
                 if (tab === activeTab) {
@@ -1791,6 +1795,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     /** Bélyegkép az aktív lapról, mielőtt másik lapra váltunk. */
     private fun captureThumbnail(tab: Tab, done: () -> Unit) {
+        val wrapped = done
+        @Suppress("NAME_SHADOWING")
+        val done = {
+            rememberStartShot(tab)
+            wrapped()
+        }
         val bmp = renderPage(tab, 0.55f)
         if (bmp != null) {
             tab.thumbnail = bmp
@@ -1814,6 +1824,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             val barTopY = (barRow.top + barRow.translationY).toInt() - dp(4)
             val bottom = minOf(wv.bottom, if (dockTop) wv.bottom else barTopY).coerceAtMost(scene.height)
             val finish = {
+                rememberStartShot(tab)
                 if (!tab.isPrivate) ThumbStore.save(applicationContext, tab.id, bmp)
                 shrinkOtherThumbnails(tab)
                 done()
@@ -2302,6 +2313,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * képernyőre (mint a menü morph-ja), mögötte a lapváltó kártyái kicsit hátrébb húzódnak és
      * elhalványulnak. A landolás után a lap finoman átúszik a valódi (már betöltött) oldalba.
      */
+    /** A kezdőlap legutóbbi képe (az új lap nyitásakor ebből rajzolódik ki a növekvő ablak). */
+    private var startShot: Bitmap? = null
+
+    private fun rememberStartShot(tab: Tab) {
+        val b = tab.thumbnail ?: return
+        if (Urls.isStart(tab.url) && !b.isRecycled) startShot = b
+    }
+
     private fun openTabFromOverview(tab: Tab, notify: Boolean = true) {
         if (!overviewShown) {
             selectTab(tab, animate = false)
@@ -2331,7 +2350,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             if (night) 0xFF0E1016.toInt() else 0xFFF7F8FB.toInt()
         } else if (night) 0xFF121212.toInt() else Color.WHITE
         hero.animate().cancel()
-        hero.setup(null, full, from, screenRadius, s, color)
+        // a kezdőlap képe már a megnyomástól látszik a növekvő ablakban (elmosódottból élesedve)
+        val shot = if (Urls.isStart(tab.url)) {
+            startShot?.takeIf { !it.isRecycled }
+                ?: tabs.firstOrNull { Urls.isStart(it.url) && it.thumbnail != null && it !== tab }?.thumbnail
+        } else null
+        hero.setup(shot, full, from, screenRadius, s, color)
         hero.progress = 1f
         hero.alpha = 0f
         hero.visibility = View.VISIBLE
@@ -2360,6 +2384,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             hero.progress = 1f - f
             // a kártya gyorsan előtűnik, majd teljes képernyőre nő
             hero.alpha = (f / 0.12f).coerceIn(0f, 1f)
+            if (shot != null && Build.VERSION.SDK_INT >= 31) {
+                // elmosódottból élesedik, ahogy nő
+                val r = 36f * resources.displayMetrics.density * (1f - f) * (1f - f)
+                hero.setRenderEffect(
+                    if (r < 0.5f) null else RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP)
+                )
+            }
             val sc = 1f - 0.08f * f
             tabList.scaleX = sc
             tabList.scaleY = sc
@@ -2387,6 +2418,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 animateTopVis(1f, 300)
                 syncUi()
                 updateLens()
+                if (Build.VERSION.SDK_INT >= 31) hero.setRenderEffect(null)
                 // a lap a valódi oldalba úszik át, amint az kirajzolódott
                 whenPageDrawn(tab, 1500L) { fadeOutHero() }
             }
@@ -2424,17 +2456,32 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             val wv = tab.webView
             if (tab !== activeTab || overviewShown || searchShown || capturing) return@postDelayed
             // van-e az oldal tetején rögzített fejléc (a térköz-szkript jegyzi meg)
-            wv.evaluateJavascript("window.__gbHdrNow?window.__gbHdrNow():0") { r ->
-                val h = r == "1"
-                if (h != tab.fixedHeader) {
-                    tab.fixedHeader = h
+            // Van-e az oldalnak rögzített fejléce, és most éppen látszik-e. Mint a Safariban: ha van
+            // fejléc, az állapotsor tömören felveszi a színét, és az is marad (görgetéskor is).
+            wv.evaluateJavascript(
+                "(window.__gbHdrEls&&window.__gbHdrEls.length?1:0)+','+(window.__gbHdrNow?window.__gbHdrNow():0)"
+            ) { r ->
+                val parts = r.orEmpty().trim('"').split(',')
+                val has = parts.getOrNull(0) == "1"
+                val now = parts.getOrNull(1) == "1"
+                if (has != tab.fixedHeader) {
+                    tab.fixedHeader = has
                     if (tab === activeTab) updateLens()
                 }
+                // a fejléc színét akkor mérjük, amikor éppen látszik
+                if (has && now) probeRow(tab, header = true)
             }
-            if (wv.scrollY != 0 && !tab.fixedHeader) return@postDelayed
+            if (wv.scrollY != 0) return@postDelayed
+            probeRow(tab, header = false)
+        }, delay)
+    }
+
+    /** Az állapotsor alatti sor leggyakoribb színe (a fejléc / az oldal tetejének színe). */
+    private fun probeRow(tab: Tab, header: Boolean) {
+        run {
             val w = scene.width
             val y = statusTop + dp(2)
-            if (w <= 0 || y + 1 >= scene.height) return@postDelayed
+            if (w <= 0 || y + 1 >= scene.height) return@run
             try {
                 PixelCopy.request(window, Rect(0, y, w, y + 1), padProbe, { result ->
                     if (result != PixelCopy.SUCCESS || tab !== activeTab) return@request
@@ -2463,7 +2510,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     } else {
                         0
                     }
-                    if (c != tab.padColor) {
+                    if (header) {
+                        if (c != 0 && c != tab.headerColor) {
+                            tab.headerColor = c
+                            updateLens()
+                        }
+                    } else if (c != tab.padColor) {
                         tab.padColor = c
                         updateLens()
                     }
@@ -2472,7 +2524,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             } catch (e: Exception) {
                 // marad az eddigi
             }
-        }, delay)
+        }
     }
 
     private fun parseCssColor(css: String): Int {
@@ -2638,6 +2690,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             hero.progress = if (opening) 0f else 1f
             heroHold++
             hero.animate().cancel()
+            if (Build.VERSION.SDK_INT >= 31) hero.setRenderEffect(null)
             hero.alpha = 1f
             hero.visibility = View.VISIBLE
         } else {

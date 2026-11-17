@@ -29,6 +29,8 @@ class Tab(val webView: GlassWebView) {
     var padColor: Int = 0
     /** Az oldal tetején rögzített fejléc van (az állapotsor mögött a fejléc folytatódik). */
     var fixedHeader: Boolean = false
+    /** A rögzített fejléc színe (amikor látszott), 0 = még nem ismert. */
+    var headerColor: Int = 0
 }
 
 object Urls {

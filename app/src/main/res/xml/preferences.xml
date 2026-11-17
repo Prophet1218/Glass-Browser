@@ -24,6 +24,13 @@
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
 
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="true"
+            android:key="translate_offer"
+            android:summary="Idegen nyelvű oldalon felajánlja a fordítást, mint a Chrome."
+            android:title="Fordítás felajánlása"
+            app:iconSpaceReserved="false" />
+
         <ListPreference
             android:defaultValue="system"
             android:entries="@array/app_theme_names"

@@ -1122,6 +1122,8 @@ class MainActivity : AppCompatActivity() {
         wv.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
         val tab = Tab(wv)
         applyWebSettings(wv)
+        // a fordító szkript ezen keresztül jelzi, sikerült-e a fordítás
+        wv.addJavascriptInterface(TranslateBridge(tab), "GlassTr")
         // A kezdőlapon a hosszú nyomás csak a csempe szerkesztőjét nyitja meg: a WebView saját
         // reakciója (a link "kiemelése", húzása, szövegkijelölés) itt ki van kapcsolva.
         wv.setOnLongClickListener { Urls.isStart(wv.url.orEmpty()) }
@@ -1193,7 +1195,12 @@ class MainActivity : AppCompatActivity() {
                 tab.progress = 5
                 if (url != null) tab.url = url
                 wv.resetInset()
-                if (tab === activeTab) showDock()
+                tab.translated = false
+                tab.trPending = false
+                if (tab === activeTab) {
+                    showDock()
+                    hideTranslateBar()
+                }
                 if (tab === activeTab) syncUi()
             }
 
@@ -1211,6 +1218,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 HistoryStore.add(url, view?.title)
                 if (Urls.isStart(url.orEmpty())) view?.evaluateJavascript(startPageJs(), null)
+                if (tab === activeTab && view != null) offerTranslate(tab, view)
                 if (tab === activeTab) syncUi()
             }
 
@@ -1276,14 +1284,35 @@ class MainActivity : AppCompatActivity() {
         val current = activeWebView
         for (i in contentContainer.childCount - 1 downTo 0) {
             val child = contentContainer.getChildAt(i)
-            if (child !== current) {
-                contentContainer.removeViewAt(i)
+            if (child !== current && child.visibility != View.GONE) {
+                // A WebView nem kerül le a képernyőről, csak elrejtjük: a levett, majd visszatett
+                // WebView néha nem rajzolta ki magát (szürke maradt, amíg nem görgettél).
+                child.visibility = View.GONE
                 (child as? WebView)?.onPause()
             }
         }
     }
 
+    /**
+     * Egy újra megjelenített WebView-t rákényszerít, hogy kirajzolja a tartalmát (egy alig
+     * észrevehető, 1 képpontos görgetéssel oda-vissza), különben néha szürke maradna.
+     */
+    private fun kickRepaint(wv: WebView) {
+        wv.postDelayed({
+            if (wv.visibility != View.VISIBLE) return@postDelayed
+            if (wv.canScrollVertically(1)) {
+                wv.scrollBy(0, 1)
+                wv.scrollBy(0, -1)
+            } else if (wv.canScrollVertically(-1)) {
+                wv.scrollBy(0, -1)
+                wv.scrollBy(0, 1)
+            }
+            wv.invalidate()
+        }, 60L)
+    }
+
     private fun selectTab(tab: Tab, animate: Boolean = true) {
+        hideTranslateBar()
         showDock(animate = false)
         val old = activeTab
         val wv = tab.webView
@@ -1293,7 +1322,9 @@ class MainActivity : AppCompatActivity() {
             applyStatusColor()
             // az új lap a régi fölé kerül; a régit csak az átmenet végén vesszük le
             if (wv.parent == null) contentContainer.addView(wv) else wv.bringToFront()
+            wv.visibility = View.VISIBLE
             wv.onResume()
+            kickRepaint(wv)
             wv.animate().cancel()
             if (old != null && animate) {
                 val ow = old.webView
@@ -1315,6 +1346,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             applyWebTop(wv)
             if (wv.parent == null) contentContainer.addView(wv)
+            wv.visibility = View.VISIBLE
             wv.onResume()
         }
 
@@ -1783,6 +1815,7 @@ class MainActivity : AppCompatActivity() {
     private fun showOverview() {
         if (overviewShown || overviewBusy) return
         val tab = activeTab ?: return
+        hideTranslateBar()
         showDock(animate = false)
         hideMenu()
         releaseFocus()
@@ -2017,6 +2050,7 @@ class MainActivity : AppCompatActivity() {
     /** A "repülő" kép finoman átúszik a valódi oldalba, majd eltűnik. */
     private fun fadeOutHero() {
         if (hero.visibility != View.VISIBLE) return
+        activeWebView?.let { kickRepaint(it) }
         hero.animate().cancel()
         hero.animate().alpha(0f).setDuration(180)
             .setInterpolator(DecelerateInterpolator())
@@ -2254,10 +2288,32 @@ class MainActivity : AppCompatActivity() {
             if (t.loading) t.webView.stopLoading() else t.webView.reload()
         }
 
+        // Hosszú nyomás a címen (gépelés nélkül): a webcím a vágólapra kerül, más nem történik.
+        urlField.isLongClickable = false
+        val copyDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onLongPress(e: MotionEvent) {
+                if (urlField.hasFocus()) return
+                urlCopied = true
+                copyUrl()
+                // a mező ne kapja meg a felengedést (különben szerkesztésbe lépne)
+                val cancel = MotionEvent.obtain(e)
+                cancel.action = MotionEvent.ACTION_CANCEL
+                urlField.onTouchEvent(cancel)
+                cancel.recycle()
+            }
+        })
+        urlField.setOnTouchListener { _, ev ->
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) urlCopied = false
+            copyDetector.onTouchEvent(ev)
+            urlCopied
+        }
+
         // összehúzott állapotban a kapszulára koppintva a sáv visszanő
         urlField.setOnClickListener { if (collapsed) setCollapsed(false) }
 
         urlField.setOnFocusChangeListener { _, hasFocus ->
+            // gépelés közben a hosszú nyomás a szokásos (beillesztés, kijelölés), egyébként másol
+            urlField.isLongClickable = hasFocus
             if (hasFocus) {
                 setCollapsed(false)
                 showDock()
@@ -3023,6 +3079,216 @@ class MainActivity : AppCompatActivity() {
     private fun isTranslated(url: String): Boolean =
         Uri.parse(url).host?.endsWith(".translate.goog") == true
 
+    /** A fordítás sávja (a Chrome "Lefordítod az oldalt?" sávjához hasonló). */
+    private var trBar: LinearLayout? = null
+    private var trTitle: TextView? = null
+    private var trSub: TextView? = null
+    private var trAction: TextView? = null
+    private var trTab: Tab? = null
+    private var trFrom = ""
+    /** Webhelyek, ahol ebben a munkamenetben bezártad az ajánlatot (ott nem kérdezünk újra). */
+    private val trDismissed = HashSet<String>()
+
+    private fun langName(code: String): String {
+        val ui = java.util.Locale(if (L.en) "en" else "hu")
+        val n = java.util.Locale(code).getDisplayLanguage(ui)
+        return if (n.isBlank() || n == code) code.uppercase() else n.replaceFirstChar { it.uppercase() }
+    }
+
+    /** Az oldal betöltése után: ha más nyelvű, mint a célnyelv, felajánljuk a fordítást. */
+    private fun offerTranslate(tab: Tab, wv: WebView) {
+        if (!prefs.getBoolean("translate_offer", true)) return
+        val url = tab.url
+        if (Urls.isStart(url) || isTranslated(url) || tab.translated) return
+        val host = Urls.host(url)
+        if (host in trDismissed) return
+        wv.evaluateJavascript(
+            "(function(){var l=(document.documentElement.lang||'').toLowerCase();" +
+                "if(!l){var m=document.querySelector('meta[http-equiv=\"content-language\" i]');if(m)l=(m.content||'').toLowerCase();}" +
+                "return l.split(/[-_,;\\s]/)[0];})()"
+        ) { res ->
+            val lang = res?.trim('"').orEmpty()
+            if (lang.length !in 2..3 || tab !== activeTab || tab.translated) return@evaluateJavascript
+            if (lang == translateTarget()) return@evaluateJavascript
+            trFrom = lang
+            showTranslateBar(tab, translating = false, done = false)
+        }
+    }
+
+    private fun ensureTranslateBar(): LinearLayout {
+        trBar?.let { return it }
+        val text = if (night) Color.WHITE else 0xFF1D1F24.toInt()
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(dp(14), dp(8), dp(6), dp(8))
+        bar.background = GradientDrawable().apply {
+            cornerRadius = dp(18).toFloat()
+            setColor(if (night) 0xFF262931.toInt() else Color.WHITE)
+        }
+        bar.elevation = dp(6).toFloat()
+        bar.isClickable = true
+        val icon = ImageView(this)
+        icon.setImageResource(R.drawable.ic_m_translate)
+        icon.imageTintList = ColorStateList.valueOf(0xFF0A84FF.toInt())
+        bar.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
+        val texts = LinearLayout(this)
+        texts.orientation = LinearLayout.VERTICAL
+        val t = TextView(this)
+        t.textSize = 15f
+        t.setTextColor(text)
+        t.setTypeface(t.typeface, android.graphics.Typeface.BOLD)
+        val sub = TextView(this)
+        sub.textSize = 12.5f
+        sub.setTextColor(ColorUtils.setAlphaComponent(text, 150))
+        texts.addView(t)
+        texts.addView(sub)
+        val tlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        tlp.marginStart = dp(12)
+        bar.addView(texts, tlp)
+        val action = TextView(this)
+        action.textSize = 15f
+        action.setTextColor(0xFF0A84FF.toInt())
+        action.setTypeface(action.typeface, android.graphics.Typeface.BOLD)
+        action.setPadding(dp(12), dp(10), dp(12), dp(10))
+        bar.addView(action)
+        val close = ImageButton(this)
+        close.setImageResource(R.drawable.ic_close)
+        close.background = null
+        close.imageTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(text, 160))
+        close.setPadding(dp(10), dp(10), dp(10), dp(10))
+        close.scaleType = ImageView.ScaleType.FIT_CENTER
+        close.setOnClickListener {
+            trTab?.let { trDismissed.add(Urls.host(it.url)) }
+            hideTranslateBar()
+        }
+        bar.addView(close, LinearLayout.LayoutParams(dp(40), dp(40)))
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.gravity = Gravity.TOP
+        lp.leftMargin = dp(10)
+        lp.rightMargin = dp(10)
+        root.addView(bar, lp)
+        bar.visibility = View.GONE
+        trBar = bar
+        trTitle = t
+        trSub = sub
+        trAction = action
+        return bar
+    }
+
+    private fun showTranslateBar(tab: Tab, translating: Boolean, done: Boolean) {
+        val bar = ensureTranslateBar()
+        trTab = tab
+        val target = translateTarget()
+        val from = if (trFrom.isNotEmpty()) langName(trFrom) else ""
+        trSub?.text = if (from.isNotEmpty()) "$from → ${langName(target)}" else "→ ${langName(target)}"
+        trTitle?.text = when {
+            done -> L.t("Oldal lefordítva")
+            translating -> L.t("Fordítás…")
+            else -> L.t("Lefordítod az oldalt?")
+        }
+        trAction?.text = when {
+            done -> L.t("Visszavonás")
+            translating -> ""
+            else -> L.t("Fordítás")
+        }
+        trAction?.setOnClickListener {
+            haptic()
+            if (done) undoTranslate() else startTranslate()
+        }
+        (bar.layoutParams as FrameLayout.LayoutParams).topMargin =
+            (if (dockTop) statusTop + dockHeight() else statusTop) + dp(6)
+        bar.requestLayout()
+        if (bar.visibility != View.VISIBLE) {
+            bar.visibility = View.VISIBLE
+            bar.alpha = 0f
+            bar.translationY = -dp(16).toFloat()
+            bar.animate().alpha(1f).translationY(0f).setDuration(260)
+                .setInterpolator(DecelerateInterpolator()).start()
+        }
+        bar.removeCallbacks(trAutoHide)
+        // a "lefordítva" sáv pár másodperc múlva magától eltűnik
+        if (done) bar.postDelayed(trAutoHide, 4000L)
+    }
+
+    private val trAutoHide = Runnable { hideTranslateBar() }
+
+    private fun hideTranslateBar() {
+        val bar = trBar ?: return
+        bar.removeCallbacks(trAutoHide)
+        if (bar.visibility != View.VISIBLE) return
+        bar.animate().cancel()
+        bar.animate().alpha(0f).translationY(-dp(12).toFloat()).setDuration(180)
+            .withEndAction { bar.visibility = View.GONE }.start()
+    }
+
+    /**
+     * Fordítás a helyén, a Google Fordító oldalba épülő változatával: az oldal szövegei
+     * lecserélődnek, a webcím és az oldal állapota marad. Ha az oldal ezt nem engedi, a Google
+     * Fordító lefordított oldala nyílik meg.
+     */
+    private fun startTranslate() {
+        val tab = activeTab ?: return
+        val wv = tab.webView
+        val url = tab.url
+        if (url.isBlank() || Urls.isStart(url)) return
+        val target = translateTarget()
+        showTranslateBar(tab, translating = true, done = false)
+        val js = "(function(tl){" +
+            "if(window.__glassTr){window.__glassTr(tl);return;}" +
+            "var st=document.createElement('style');" +
+            "st.textContent='.goog-te-banner-frame,.skiptranslate,#goog-gt-tt,.goog-te-balloon-frame,.goog-tooltip,.VIpgJd-ZVi9od-ORHb-OEVmcd,.VIpgJd-ZVi9od-aZ2wEe-wOHMyf{display:none!important}" +
+            "body{top:0!important}font{background:none!important;box-shadow:none!important}';" +
+            "document.documentElement.appendChild(st);" +
+            "var d=document.createElement('div');d.id='__glass_te';d.style.display='none';(document.body||document.documentElement).appendChild(d);" +
+            "window.__glassTr=function(t){var n=0;(function go(){var c=document.querySelector('select.goog-te-combo');" +
+            "if(c&&c.options.length>1){c.value=t;c.dispatchEvent(new Event('change'));GlassTr.done(1);}" +
+            "else if(n++<80){setTimeout(go,150);}else{GlassTr.done(0);}})();};" +
+            "window.__glassTEInit=function(){try{new google.translate.TranslateElement({pageLanguage:'auto',autoDisplay:false},'__glass_te');window.__glassTr(tl);}catch(e){GlassTr.done(0);}};" +
+            "var s=document.createElement('script');s.src='https://translate.google.com/translate_a/element.js?cb=__glassTEInit';" +
+            "s.onerror=function(){GlassTr.done(0);};(document.head||document.documentElement).appendChild(s);" +
+            "})('$target');"
+        tab.trPending = true
+        wv.evaluateJavascript(js, null)
+        // ha 12 mp alatt sem jön válasz, a megbízható tartalék
+        handler.postDelayed({
+            if (tab.trPending && tab === activeTab) onTranslateResult(tab, false)
+        }, 12000L)
+    }
+
+    /** A fordító szkript jelez vissza (a WebView saját szálán: a fő szálra tesszük át). */
+    inner class TranslateBridge(private val tab: Tab) {
+        @android.webkit.JavascriptInterface
+        fun done(ok: Int) {
+            handler.post { onTranslateResult(tab, ok == 1) }
+        }
+    }
+
+    private fun onTranslateResult(tab: Tab, ok: Boolean) {
+        if (!tab.trPending) return
+        tab.trPending = false
+        if (ok) {
+            tab.translated = true
+            if (tab === activeTab) showTranslateBar(tab, translating = false, done = true)
+        } else if (tab === activeTab) {
+            hideTranslateBar()
+            translatePage(tab.url)
+        }
+    }
+
+    /** Az eredeti oldal: újratöltjük (a fordító proxy-oldaláról visszavált az eredeti címre). */
+    private fun undoTranslate() {
+        val tab = activeTab ?: return
+        hideTranslateBar()
+        if (isTranslated(tab.url)) {
+            showOriginal()
+        } else {
+            tab.translated = false
+            trTab?.let { trDismissed.add(Urls.host(it.url)) }
+            tab.webView.reload()
+        }
+    }
+
     private fun translatePage(url: String) {
         if (url.isBlank() || Urls.isStart(url)) return
         val target = translateTarget()
@@ -3043,6 +3309,20 @@ class MainActivity : AppCompatActivity() {
         q.forEach { k -> u.getQueryParameters(k).forEach { v -> b.appendQueryParameter(k, v) } }
         u.encodedFragment?.let { b.encodedFragment(it) }
         wv.loadUrl(b.build().toString())
+    }
+
+    private var urlCopied = false
+
+    private fun copyUrl() {
+        val url = currentUrl
+        if (url.isBlank() || Urls.isStart(url)) return
+        haptic()
+        val cm = getSystemService(android.content.ClipboardManager::class.java) ?: return
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("URL", url))
+        // Android 13-tól a rendszer maga jelzi a másolást
+        if (Build.VERSION.SDK_INT < 33) {
+            Toast.makeText(this, L.t("Webcím kimásolva"), Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun showMenu() {
@@ -3091,15 +3371,13 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, L.t("Könyvjelző mentve"), Toast.LENGTH_SHORT).show()
             }
         }
-        menuRow(L.t("Könyvjelzők"), icon = R.drawable.ic_m_bookmarks) { openSearchTab(1) }
-        menuRow(L.t("Előzmények"), icon = R.drawable.ic_m_history) { openSearchTab(2) }
-        // Google Fordító: az oldal lefordítva nyílik meg (a fordított oldalról vissza is lehet váltani)
-        val translated = isTranslated(pageUrl)
+        // Google Fordító: az oldal a helyén fordul le (mint a Chrome-ban), vissza is állítható
+        val translated = activeTab?.translated == true || isTranslated(pageUrl)
         menuRow(
             if (translated) L.t("Eredeti oldal") else L.t("Oldal fordítása"),
             canMark, icon = R.drawable.ic_m_translate
         ) {
-            if (translated) showOriginal() else translatePage(pageUrl)
+            if (translated) undoTranslate() else startTranslate()
         }
         val desktop = prefs.getBoolean("desktop_mode", false)
         menuRow(L.t("Asztali oldal"), icon = R.drawable.ic_m_desktop, check = desktop) {

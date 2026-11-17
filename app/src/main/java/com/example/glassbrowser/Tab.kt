@@ -19,6 +19,10 @@ class Tab(val webView: GlassWebView) {
     var stayInBrowser: Boolean = false
     var loading: Boolean = false
     var progress: Int = 0
+    /** Az oldal a helyén le van fordítva (Google Fordító). */
+    var translated: Boolean = false
+    /** Fut a fordítás, várjuk a visszajelzést. */
+    var trPending: Boolean = false
 }
 
 object Urls {

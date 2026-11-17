@@ -254,7 +254,15 @@ object L {
         "Térkép" to "Maps",
         "Legutóbb megnyitott" to "Recently opened",
         "Javaslatok" to "Suggestions",
-        "Váltás erre a lapra" to "Switch to tab"
+        "Váltás erre a lapra" to "Switch to tab",
+        "Webcím kimásolva" to "Address copied",
+        "Oldal lefordítva" to "Page translated",
+        "Fordítás…" to "Translating…",
+        "Lefordítod az oldalt?" to "Translate page?",
+        "Visszavonás" to "Undo",
+        "Fordítás" to "Translate",
+        "Fordítás felajánlása" to "Offer to translate",
+        "Idegen nyelvű oldalon felajánlja a fordítást, mint a Chrome." to "Offers to translate pages in other languages, like Chrome."
     )
 
     private val HU: Map<String, String> = EN.entries.associate { (k, v) -> v to k }

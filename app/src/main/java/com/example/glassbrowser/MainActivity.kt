@@ -459,6 +459,67 @@ class MainActivity : AppCompatActivity() {
     /** Igaz, ha az oldal valóban átúszik az állapotsor mögött (az "átúszó" felső elmosás). */
     private fun flowLayout(): Boolean = lensActive && topBlurOn && topStyle == "flow" && !dockTop
 
+    /** Alul rögzített sáv: mennyire úszott le görgetés közben (0 = teljesen látszik). */
+    private var dockOffset = 0f
+    private var dockAnim: ValueAnimator? = null
+    private val dockSnap = Runnable { snapDock() }
+
+    /**
+     * Firefox-szerű viselkedés: lefelé görgetve a sáv az ujjal együtt lecsúszik a képernyőről,
+     * felfelé görgetve visszajön. Ha félúton áll meg a görgetés, a közelebbi állapotba ugrik.
+     */
+    private fun onDockScroll(scrollY: Int, dy: Int) {
+        if (urlField.hasFocus() || menuVisible || overviewShown || overviewBusy) return
+        dockAnim?.cancel()
+        if (scrollY <= 4) {
+            setDockOffset(0f)
+        } else {
+            setDockOffset(dockOffset + dy)
+        }
+        handler.removeCallbacks(dockSnap)
+        handler.postDelayed(dockSnap, 140L)
+    }
+
+    private fun dockTravel(): Float = (dockHeight() + lastBottom).toFloat()
+
+    private fun setDockOffset(v: Float) {
+        dockOffset = v.coerceIn(0f, dockTravel())
+        applyDockOffset()
+    }
+
+    private fun applyDockOffset() {
+        val o = if (docked && !dockTop) dockOffset else 0f
+        if (!docked || dockTop) dockOffset = 0f
+        barRow.translationY = o
+        dockBg.translationY = o
+    }
+
+    private fun snapDock() {
+        val travel = dockTravel()
+        if (dockOffset <= 0f || dockOffset >= travel) return
+        animateDock(if (dockOffset > travel / 2f) travel else 0f)
+    }
+
+    /** A sáv visszaúszik a helyére (pl. új oldal betöltésekor, a mezőre koppintva). */
+    private fun showDock(animate: Boolean = true) {
+        handler.removeCallbacks(dockSnap)
+        if (dockOffset <= 0f) return
+        if (animate) animateDock(0f) else {
+            dockAnim?.cancel()
+            setDockOffset(0f)
+        }
+    }
+
+    private fun animateDock(target: Float) {
+        dockAnim?.cancel()
+        val a = ValueAnimator.ofFloat(dockOffset, target)
+        a.duration = 220L
+        a.interpolator = DecelerateInterpolator()
+        a.addUpdateListener { setDockOffset(it.animatedValue as Float) }
+        dockAnim = a
+        a.start()
+    }
+
     /** A rögzített sáv magassága (a gombsor + körülötte kis térköz), a rendszersávok nélkül. */
     private fun dockHeight(): Int = barRow.layoutParams.height + dp(8)
 
@@ -469,6 +530,9 @@ class MainActivity : AppCompatActivity() {
      */
     private fun applyBarStyle() {
         if (docked && collapsed) setCollapsed(false)
+        dockAnim?.cancel()
+        dockOffset = 0f
+        applyDockOffset()
         dockBg.visibility = if (docked) View.VISIBLE else View.GONE
         if (docked) {
             barLeft.background = null
@@ -540,7 +604,8 @@ class MainActivity : AppCompatActivity() {
             else -> statusTop
         }
         // alul rögzített sávnál az oldal a sáv tetejéig tart (nem fut alá)
-        val bottomMargin = if (docked && !dockTop) dockHeight() + navBottom else 0
+        // alul rögzített sávnál is a képernyő aljáig ér: a sáv görgetéskor elúszik (mint a Firefoxban)
+        val bottomMargin = 0
         if (lp.topMargin != margin || lp.bottomMargin != bottomMargin) {
             lp.topMargin = margin
             lp.bottomMargin = bottomMargin
@@ -1128,6 +1193,7 @@ class MainActivity : AppCompatActivity() {
                 tab.progress = 5
                 if (url != null) tab.url = url
                 wv.resetInset()
+                if (tab === activeTab) showDock()
                 if (tab === activeTab) syncUi()
             }
 
@@ -1179,6 +1245,7 @@ class MainActivity : AppCompatActivity() {
                     dy > 6 -> setCollapsed(true)
                     dy < -6 -> setCollapsed(false)
                 }
+                if (docked && !dockTop) onDockScroll(scrollY, dy)
                 updateTopFade(scrollY)
             }
         }
@@ -1217,6 +1284,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectTab(tab: Tab, animate: Boolean = true) {
+        showDock(animate = false)
         val old = activeTab
         val wv = tab.webView
         if (old !== tab) {
@@ -1517,7 +1585,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Eddig tart a pillanatkép: a keresősáv teteje fölött egy kevéssel. */
     private fun snapshotBottom(): Int {
-        if (docked) return (activeWebView?.bottom ?: scene.height).coerceAtLeast(1)
+        if (docked) return (activeWebView?.let { webFrame(it).bottom.toInt() } ?: scene.height).coerceAtLeast(1)
         return (barRow.top - dp(6)).coerceAtLeast(1)
     }
 
@@ -1671,10 +1739,25 @@ class MainActivity : AppCompatActivity() {
     private fun webRect(): RectF {
         val wv = activeWebView
         return if (snapshotFull && wv != null) {
-            RectF(0f, wv.top.toFloat(), scene.width.toFloat(), wv.bottom.toFloat())
+            webFrame(wv)
         } else {
             RectF(0f, webTop().toFloat(), scene.width.toFloat(), snapshotBottom().toFloat())
         }
+    }
+
+    /**
+     * A WebView helye. Egy épp visszatett (más lapról átváltott) WebView-nak még nincs mérete, ezért
+     * ilyenkor a margóiból számoljuk: különben a "repülő" kép egy vonalba zsugorodna a képernyő
+     * tetején, és utána egy pillanatra fekete képernyő látszana.
+     */
+    private fun webFrame(wv: WebView): RectF {
+        if (wv.height > 0 && wv.isLaidOut) {
+            return RectF(0f, wv.top.toFloat(), scene.width.toFloat(), wv.bottom.toFloat())
+        }
+        val lp = wv.layoutParams as? FrameLayout.LayoutParams
+        val top = (lp?.topMargin ?: 0).toFloat()
+        val bottom = (contentContainer.height - (lp?.bottomMargin ?: 0)).toFloat()
+        return RectF(0f, top, scene.width.toFloat(), bottom.coerceAtLeast(top + 1f))
     }
 
     private fun cardView(tab: Tab?): View? {
@@ -1700,6 +1783,7 @@ class MainActivity : AppCompatActivity() {
     private fun showOverview() {
         if (overviewShown || overviewBusy) return
         val tab = activeTab ?: return
+        showDock(animate = false)
         hideMenu()
         releaseFocus()
         setCollapsed(false)
@@ -2176,6 +2260,7 @@ class MainActivity : AppCompatActivity() {
         urlField.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 setCollapsed(false)
+                showDock()
                 urlField.gravity = Gravity.CENTER_VERTICAL or Gravity.START
                 if (docked) btnReload.visibility = View.VISIBLE
                 setFieldText(if (Urls.isStart(currentUrl)) "" else currentUrl)
@@ -2553,11 +2638,12 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     out.add(SuggestItem(engineTitle(), null, null, 0, kind = 0))
                     out.add(SuggestItem(q, null, null, R.drawable.ic_search, kind = 1))
+                    // összesen 3 keresési sor
                     for (text in onlineItems) {
+                        if (out.size >= 4) break
                         if (!text.equals(q, ignoreCase = true)) {
                             out.add(SuggestItem(text, null, null, R.drawable.ic_search, kind = 1))
                         }
-                        if (out.size >= 7) break
                     }
                     val sites = ArrayList<SuggestItem>()
                     // nyitott lapok: koppintásra arra a lapra váltunk
@@ -2961,6 +3047,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMenu() {
         if (menuVisible || overviewShown || overviewBusy) return
+        showDock(animate = false)
         releaseFocus()
         setCollapsed(false)
         glassFormOpen = false

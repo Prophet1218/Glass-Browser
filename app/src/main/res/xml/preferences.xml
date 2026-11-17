@@ -264,6 +264,13 @@
             android:title="Körív az üvegen"
             app:iconSpaceReserved="false" />
 
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="true"
+            android:key="glass_convex"
+            android:summary="Az üvegfelületek domborúnak, vastagnak látszanak: fénycsillanás a peremen, erősebb fénytörés a széleken."
+            android:title="Domború (3D) üveg"
+            app:iconSpaceReserved="false" />
+
         <Preference
             android:key="glass_reset"
             android:summary="Az üveg típusa, színe, az elmosás, a fénytörés és a színszóródás visszaáll az eredeti értékre."

@@ -427,6 +427,13 @@ class MainActivity : AppCompatActivity() {
         val refO = prefs.getInt("glass_refraction_offset", 50) * d
         val disp = prefs.getInt("glass_dispersion", 0) / 100f
         val frost = mode == "frost"
+        // domború (3D) üveg: fénycsillanás a peremen, erősebb fénytörés a széleken
+        val convexOn = prefs.getBoolean("glass_convex", true) && mode != "off"
+        // a felugró ablakok üveglapja is domború (a következő megnyitott ablaktól)
+        theme.applyStyle(
+            if (prefs.getBoolean("glass_convex", true)) R.style.GlassDialogs_Convex else R.style.GlassDialogs_Flat,
+            true
+        )
         lensBlur = if (frost) maxOf(blur * 2.4f, 16f * d) else blur
         // a menü és a javaslatok ugyanazt az üveget kapják, mint a keresősáv (együtt állíthatók)
         panelBlur = lensBlur
@@ -447,6 +454,8 @@ class MainActivity : AppCompatActivity() {
                     l.setParams(refH, refO * 0.6f, disp * 0.6f)
                 }
                 l.setRim(0, 1f)
+                // matt üvegnél nincs fénytörés: ott csak a fény- és árnyékhatás marad
+                l.setConvex(if (convexOn) 1f else 0f, if (convexOn && !frost) 1f else 0f)
                 lensActive = true
             } catch (e: Throwable) {
                 lensFailed = true
@@ -494,6 +503,9 @@ class MainActivity : AppCompatActivity() {
             it.setOverlay(overlay)
             it.setShade((glassShade * 255f).toInt())
             it.setRim(rimOn)
+            // a shader alatt csak finom ráerősítés (a dér réteg tompítja a shader fényeit),
+            // shader nélkül (egyszerű üveg) a bőr adja a teljes domború hatást
+            it.setConvex(if (!convexOn) 0f else if (lensActive) 0.5f else 1f)
             // dér réteg: az üveg a választott árnyalatot kapja (olvasható szöveg minden oldal fölött)
             it.setFrost(
                 if (!lensActive || glassClear()) Color.TRANSPARENT

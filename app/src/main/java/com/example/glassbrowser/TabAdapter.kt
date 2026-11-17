@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 
 /** A lapváltó rácsának kártyái: fent a lap képe (bezáró gombbal), alatta az ikon és a cím. */
@@ -29,12 +30,15 @@ class TabAdapter(
         val icon: ImageView = view.findViewById(R.id.tabIcon)
         val title: TextView = view.findViewById(R.id.tabTitle)
         val close: ImageButton = view.findViewById(R.id.tabClose)
+        /** A bezáró gomb folyékony üveg háttere (a kártya bélyegképéből). */
+        val closeGlass = GlassCloseDrawable(close)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_tab, parent, false)
         val holder = VH(v)
         holder.card.clipToOutline = true
+        holder.close.background = holder.closeGlass
         return holder
     }
 
@@ -54,6 +58,10 @@ class TabAdapter(
         holder.icon.alpha = ta
         holder.icon.translationY = shift
         holder.thumb.setImageBitmap(tab.thumbnail)
+        // a bezáró gomb üvege a kártya képéből készül (nagyítva, elmosva)
+        holder.closeGlass.convex = PreferenceManager.getDefaultSharedPreferences(holder.close.context)
+            .getBoolean("glass_convex", true)
+        holder.closeGlass.setThumbnail(tab.thumbnail)
         val icon = tab.favicon
         if (icon != null && !start) {
             holder.icon.setImageBitmap(icon)

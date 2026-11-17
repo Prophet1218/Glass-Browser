@@ -161,6 +161,9 @@ object L {
         "Körív az üvegen" to "Glass rim",
         "Vékony fényív az üvegfelületek felső és alsó szélén." to
             "A thin highlight on the top and bottom edges of glass surfaces.",
+        "Domború (3D) üveg" to "Convex (3D) glass",
+        "Az üvegfelületek domborúnak, vastagnak látszanak: fénycsillanás a peremen, erősebb fénytörés a széleken." to
+            "Glass surfaces look convex and thick: a glint along the edge, stronger refraction near the edges.",
         "Felső (állapotsor) hatás" to "Top (status bar) effect",
         "Kikapcsolva az állapotsor mögött egyszínű háttér van, a telefon világos vagy sötét módja szerint." to
             "When off, the status bar has a plain background matching light or dark mode.",

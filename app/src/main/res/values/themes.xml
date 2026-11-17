@@ -34,6 +34,20 @@
         <item name="buttonBarNeutralButtonStyle">@style/GlassDialogButton</item>
     </style>
 
+    <!-- Domború (3D) üveg bekapcsolva: a felugró ablakok is domború üveglapok -->
+    <style name="GlassDialog.Convex">
+        <item name="android:windowBackground">@drawable/dialog_glass_convex</item>
+    </style>
+
+    <!-- Az ablak témájára rátett kiegészítés (a "Domború (3D) üveg" kapcsoló szerint) -->
+    <style name="GlassDialogs.Convex" parent="">
+        <item name="alertDialogTheme">@style/GlassDialog.Convex</item>
+    </style>
+
+    <style name="GlassDialogs.Flat" parent="">
+        <item name="alertDialogTheme">@style/GlassDialog</item>
+    </style>
+
     <style name="GlassDialogButton" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
         <item name="android:textAllCaps">false</item>
         <item name="android:textColor">#0A84FF</item>

@@ -43,6 +43,14 @@ class GlassSkinDrawable(density: Float) : Drawable() {
         strokeWidth = 1.3f * density
     }
     private var rimOn = false
+    private val dens = density
+    /** Domború (3D) hatás erőssége, 0 = nincs. */
+    private var convexAmt = 0f
+    private val convexBody = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val convexRim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f * density
+    }
     private var contentColor = Color.WHITE
     private val rect = RectF()
     private var tintAlpha = 0.45f
@@ -69,6 +77,19 @@ class GlassSkinDrawable(density: Float) : Drawable() {
             rebuild()
             invalidateSelf()
         }
+    }
+
+    /**
+     * Domború, vastag üveg kinézete (0..1): felül fényes, alul enyhén árnyékos felület és egy
+     * vékony, fényes belső perem. A shader nélküli (egyszerű) üvegen ez adja a térhatást, a
+     * shaderes üvegen csak finoman ráerősít.
+     */
+    fun setConvex(amount: Float) {
+        val a = amount.coerceIn(0f, 1f)
+        if (convexAmt == a) return
+        convexAmt = a
+        rebuild()
+        invalidateSelf()
     }
 
     /** Sötétítés: fekete fátyol az üvegen, [alpha] 0..255. */
@@ -124,6 +145,27 @@ class GlassSkinDrawable(density: Float) : Drawable() {
             )
         }
 
+        if (convexAmt > 0f) {
+            val a = convexAmt
+            fun white(f: Float) = Color.argb((255 * f * a).toInt().coerceIn(0, 255), 255, 255, 255)
+            fun black(f: Float) = Color.argb((255 * f * a).toInt().coerceIn(0, 255), 0, 0, 0)
+            // a "kupola" teteje visszaveri a fényt, az alja felé az üveg vastagsága sötétít
+            convexBody.shader = LinearGradient(
+                0f, top, 0f, bottom,
+                intArrayOf(white(0.20f), white(0.05f), Color.TRANSPARENT, black(0.08f)),
+                floatArrayOf(0f, 0.38f, 0.66f, 1f), Shader.TileMode.CLAMP
+            )
+            // vékony belső fényperem: felül erős, alul (az átütő fénytől) halványabb
+            convexRim.shader = LinearGradient(
+                0f, top, 0f, bottom,
+                intArrayOf(white(0.62f), white(0.06f), white(0.30f)),
+                floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+            )
+        } else {
+            convexBody.shader = null
+            convexRim.shader = null
+        }
+
         if (rimOn) {
             // körív: felül és alul látszik, középen elhalványul
             val base = Color.alpha(contentColor)
@@ -156,6 +198,15 @@ class GlassSkinDrawable(density: Float) : Drawable() {
         if (Color.alpha(frost.color) > 0) canvas.drawRoundRect(rect, r, r, frost)
         if (Color.alpha(overlayColor) > 0) canvas.drawRoundRect(rect, r, r, overlay)
         if (shade.alpha > 0) canvas.drawRoundRect(rect, r, r, shade)
+        if (convexAmt > 0f && convexBody.shader != null) {
+            canvas.drawRoundRect(rect, r, r, convexBody)
+            // a fényperem kicsit beljebb, mint a körív: az üveg vastagságát érzékelteti
+            val ci = 1.1f * dens
+            rect.inset(ci, ci)
+            val cr = (r - ci).coerceAtLeast(0f)
+            canvas.drawRoundRect(rect, cr, cr, convexRim)
+            rect.set(b)
+        }
         if (rimOn) {
             val rh = rim.strokeWidth / 2f
             rect.inset(rh, rh)
@@ -175,6 +226,8 @@ class GlassSkinDrawable(density: Float) : Drawable() {
         fill.colorFilter = colorFilter
         overlay.colorFilter = colorFilter
         shade.colorFilter = colorFilter
+        convexBody.colorFilter = colorFilter
+        convexRim.colorFilter = colorFilter
     }
 
     @Suppress("OVERRIDE_DEPRECATION")

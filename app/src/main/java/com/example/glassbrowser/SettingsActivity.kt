@@ -365,6 +365,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
         setPreferencesFromResource(R.xml.preferences, rootKey)
         val act = requireActivity() as SettingsActivity
         L.prefs(preferenceScreen)
+        setupSections()
 
         // nyelvváltás: a beállítások képernyő azonnal az új nyelven jelenik meg
         findPreference<SeekBarPreference>("anim_speed")?.setOnPreferenceChangeListener { _, v ->
@@ -545,6 +546,62 @@ class SettingsFragment : PreferenceFragmentCompat() {
             }
             true
         }
+    }
+
+    private val sections = ArrayList<SectionPreference>()
+
+    /**
+     * Every category becomes a collapsible section: its title is a row with a chevron, the items
+     * show only when it is open (one section open at a time, so the list stays short).
+     */
+    private fun setupSections() {
+        val screen = preferenceScreen
+        for (i in 0 until screen.preferenceCount) {
+            val cat = screen.getPreference(i) as? androidx.preference.PreferenceCategory ?: continue
+            val head = SectionPreference(requireContext(), cat)
+            head.title = cat.title
+            val names = (0 until cat.preferenceCount).mapNotNull { cat.getPreference(it).title?.toString() }
+                .filter { it.isNotBlank() }
+            head.summary = names.take(3).joinToString(", ") + if (names.size > 3) ", …" else ""
+            head.order = -1
+            cat.title = null
+            cat.addPreference(head)
+            head.setExpanded(false)
+            head.onToggle = { opened -> onSectionToggled(opened) }
+            sections.add(head)
+        }
+    }
+
+    private fun onSectionToggled(opened: SectionPreference) {
+        val list = listView
+        // a short fade / slide while rows appear and disappear
+        list?.itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator().apply {
+            addDuration = 220L
+            removeDuration = 160L
+            moveDuration = 260L
+            changeDuration = 0L
+        }
+        if (opened.expanded) {
+            for (s in sections) if (s !== opened && s.expanded) s.setExpanded(false)
+            list?.postDelayed({
+                val pos = (list.adapter as? androidx.preference.PreferenceGroup.PreferencePositionCallback)
+                    ?.getPreferenceAdapterPosition(opened) ?: -1
+                if (pos >= 0) {
+                    val lm = list.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager
+                    val first = lm?.findFirstVisibleItemPosition() ?: -1
+                    // the opened section's title slides up near the top if it was further down
+                    if (lm != null && pos > first) {
+                        val sm = object : androidx.recyclerview.widget.LinearSmoothScroller(requireContext()) {
+                            override fun getVerticalSnapPreference(): Int = SNAP_TO_START
+                        }
+                        sm.targetPosition = pos
+                        lm.startSmoothScroll(sm)
+                    }
+                }
+            }, 280L)
+        }
+        // switches need the animator off again (their capsule slides instead of a cross-fade)
+        list?.postDelayed({ list.itemAnimator = null }, 600L)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {

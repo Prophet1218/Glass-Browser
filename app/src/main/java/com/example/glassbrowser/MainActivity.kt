@@ -857,14 +857,22 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 val tint = Color.argb((60 * ovVis).toInt(), 10, 12, 16)
                 l.setFlow(0f, 0f, 0f, 0)
                 l.setTop(statusTop.toFloat(), 64f * d, 14f * d * ovVis, tint, 0f, true)
-            } else if (searchVis > 0.01f) {
+            } else if (searchVis > 0.01f || searchShown) {
                 // Kereső felület: a fülek sávja mögé görgetett szöveg (és az állapotsor mögötti rész)
                 // elmosódik, lefelé lágyan elhalványuló átmenettel.
                 val bandH = segBar.top + segBar.translationY + segBar.height
                 val tint = if (night) Color.argb((80 * searchVis).toInt(), 14, 16, 22)
                 else Color.argb((110 * searchVis).toInt(), 243, 244, 248)
+                // The solid status-bar fill (header color) fades out together with the panel
+                // fading in, instead of vanishing in one frame (that was the flicker on open).
+                val pc = if (activeTab?.fixedHeader == true) activeTab?.headerColor ?: 0 else activeTab?.padColor ?: 0
+                val padNow = if (!flowLayout() || overviewShown || pc == 0) 0f
+                else if (activeTab?.fixedHeader == true) statusTop.toFloat()
+                else (statusTop - (activeTab?.let { effScroll(it) } ?: statusTop)).coerceAtLeast(0).toFloat()
+                val fade = (1f - searchVis).coerceIn(0f, 1f)
+                l.setPadColor(if (padNow > 0f && fade > 0.01f) ColorUtils.setAlphaComponent(pc, (255 * fade).toInt()) else 0)
                 l.setFlow(0f, 0f, 0f, 0)
-                l.setTop(bandH, 22f * d, 16f * d * searchVis, tint, 0f, true, hardEdge = true)
+                l.setTop(bandH, 22f * d, 16f * d * searchVis, tint, if (fade > 0.01f) padNow else 0f, true, hardEdge = true)
             } else if (topBlurOn && statusTop > 0 && !searchShown && contentContainer.scaleX > 0.999f &&
                 (vis > 0.01f || (flowLayout() && !overviewShown))
             ) {
@@ -1169,7 +1177,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      */
     private fun syncStatusIcons() {
         val sb = statusBright
-        val light = if (flowLayout() && sb != null && !overviewShown && !searchShown &&
+        val searchOver = searchPage.visibility == View.VISIBLE && searchPage.alpha >= 0.5f
+        val light = if (flowLayout() && sb != null && !overviewShown && !searchOver &&
             contentContainer.scaleX > 0.999f
         ) sb else !night
         if (statusLightCache == light) return

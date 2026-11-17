@@ -43,7 +43,7 @@ class LensEffect(private val target: View) {
     private val padColor = floatArrayOf(0f, 0f, 0f, 0f)
 
     fun setPadColor(color: Int) {
-        val a = if (Color.alpha(color) > 200) 1f else 0f
+        val a = Color.alpha(color) / 255f
         if (set(padColor, Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, a)) {
             dirty = true
         }
@@ -305,7 +305,11 @@ float sdRect(vec2 c, vec4 rect, float r) {
 vec4 tap(vec2 p) {
     // a térköz az oldal fejlécének színével töltődik ki (ikonok nélkül); ha az nem ismert,
     // az első sor nyúlik fel
-    if (p.y < contentTop && padColor.a > 0.5) return vec4(padColor.rgb, 1.0);
+    if (p.y < contentTop && padColor.a > 0.0) {
+        // (partly transparent while the search panel fades in over it)
+        if (padColor.a > 0.995) return vec4(padColor.rgb, 1.0);
+        return mix(content.eval(p), vec4(padColor.rgb, 1.0), padColor.a);
+    }
     return vec4(content.eval(vec2(p.x, max(p.y, contentTop + 0.5))));
 }
 

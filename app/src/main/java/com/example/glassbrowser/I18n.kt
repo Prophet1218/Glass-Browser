@@ -114,6 +114,12 @@ object L {
         "Igen" to "Yes",
         // beállítások: kategóriák és elemek
         "Megjelenés" to "Appearance",
+        "Általános" to "General",
+        "Reklámszűrés és kiegészítők" to "Ad blocking and add-ons",
+        "Keresősáv" to "Search bar",
+        "Állapotsor" to "Status bar",
+        "Üveghatás" to "Glass effect",
+        "Animációk és érintés" to "Animations and touch",
         "Nyelv" to "Language",
         "A felület nyelve" to "App language",
         "Magyar" to "Hungarian",

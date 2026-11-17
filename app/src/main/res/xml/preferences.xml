@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory
-        android:title="Megjelenés"
+        android:key="sec_general"
+        android:title="Általános"
         app:iconSpaceReserved="false">
 
         <ListPreference
@@ -13,6 +14,55 @@
             android:title="A felület nyelve"
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            android:defaultValue="system"
+            android:entries="@array/app_theme_names"
+            android:entryValues="@array/app_theme_values"
+            android:key="app_theme"
+            android:title="Téma (világos / sötét)"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <Preference
+            android:key="app_icon"
+            android:title="Alkalmazásikon"
+            app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="sec_search"
+        android:title="Keresés és kezdőlap"
+        app:iconSpaceReserved="false">
+
+        <ListPreference
+            android:defaultValue="https://www.google.com/search?q="
+            android:entries="@array/search_engine_names"
+            android:entryValues="@array/search_engine_values"
+            android:key="search_engine"
+            android:title="Keresőmotor"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="true"
+            android:key="search_suggestions"
+            android:summary="Gépelés közben a keresőmotor javaslatai is megjelennek az előzmények mellett. Amit beírsz, az ehhez elmegy a keresőmotornak."
+            android:title="Keresési javaslatok"
+            app:iconSpaceReserved="false" />
+
+        <EditTextPreference
+            android:dialogTitle="Kezdőoldal webcíme"
+            android:key="home_page"
+            android:summary="Üresen hagyva a beépített kezdőlap nyílik meg. Új lapnál is ez töltődik be."
+            android:title="Kezdőoldal"
+            app:iconSpaceReserved="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="sec_translate"
+        android:title="Fordítás"
+        app:iconSpaceReserved="false">
 
         <ListPreference
             android:defaultValue="auto"
@@ -29,39 +79,12 @@
             android:summary="Idegen nyelvű oldalon felajánlja a fordítást, mint a Chrome."
             android:title="Fordítás felajánlása"
             app:iconSpaceReserved="false" />
+    </PreferenceCategory>
 
-        <ListPreference
-            android:defaultValue="system"
-            android:entries="@array/app_theme_names"
-            android:entryValues="@array/app_theme_values"
-            android:key="app_theme"
-            android:title="Téma (világos / sötét)"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-
-        <ListPreference
-            android:defaultValue="fade"
-            android:entries="@array/close_anim_names"
-            android:entryValues="@array/close_anim_values"
-            android:key="close_anim"
-            android:title="Lap bezárási animációja"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-
-        <com.example.glassbrowser.GlassSeekBarPreference
-            android:defaultValue="100"
-            android:key="anim_speed"
-            android:max="200"
-            android:summary="100 = normál, kisebb = lassabb, nagyobb = gyorsabb"
-            android:title="Animációk sebessége"
-            app:iconSpaceReserved="false"
-            app:min="50"
-            app:showSeekBarValue="true" />
-
-        <Preference
-            android:key="app_icon"
-            android:title="Alkalmazásikon"
-            app:iconSpaceReserved="false" />
+    <PreferenceCategory
+        android:key="sec_sites"
+        android:title="Weboldalak"
+        app:iconSpaceReserved="false">
 
         <com.example.glassbrowser.GlassSwitchPreference
             android:defaultValue="true"
@@ -69,10 +92,32 @@
             android:summary="Sötét módban a világos weboldalakat is sötétre színezi (Android 13+)."
             android:title="Weboldalak sötétítése"
             app:iconSpaceReserved="false" />
+
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="true"
+            android:key="open_in_apps"
+            android:summary="Ha egy linkhez van telepített alkalmazás (YouTube, Reddit, X, Facebook…), a link abban nyílik meg. A címsorba beírt címek mindig a böngészőben maradnak."
+            android:title="Linkek megnyitása alkalmazásban"
+            app:iconSpaceReserved="false" />
+
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="false"
+            android:key="desktop_mode"
+            android:summary="Számítógépes nézetet kér az oldalaktól."
+            android:title="Asztali oldal"
+            app:iconSpaceReserved="false" />
+
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="true"
+            android:key="third_party_cookies"
+            android:summary="Szükséges a Google-bejelentkezéshez és sok beágyazott tartalomhoz."
+            android:title="Harmadik féltől származó sütik"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
     <PreferenceCategory
-        android:title="Kiegészítők"
+        android:key="sec_addons"
+        android:title="Reklámszűrés és kiegészítők"
         app:iconSpaceReserved="false">
 
         <com.example.glassbrowser.GlassSwitchPreference
@@ -103,61 +148,8 @@
     </PreferenceCategory>
 
     <PreferenceCategory
-        android:title="Keresés és kezdőlap"
-        app:iconSpaceReserved="false">
-
-        <ListPreference
-            android:defaultValue="https://www.google.com/search?q="
-            android:entries="@array/search_engine_names"
-            android:entryValues="@array/search_engine_values"
-            android:key="search_engine"
-            android:title="Keresőmotor"
-            app:iconSpaceReserved="false"
-            app:useSimpleSummaryProvider="true" />
-
-        <com.example.glassbrowser.GlassSwitchPreference
-            android:defaultValue="true"
-            android:key="search_suggestions"
-            android:summary="Gépelés közben a keresőmotor javaslatai is megjelennek az előzmények mellett. Amit beírsz, az ehhez elmegy a keresőmotornak."
-            android:title="Keresési javaslatok"
-            app:iconSpaceReserved="false" />
-
-        <EditTextPreference
-            android:dialogTitle="Kezdőoldal webcíme"
-            android:key="home_page"
-            android:summary="Üresen hagyva a beépített kezdőlap nyílik meg. Új lapnál is ez töltődik be."
-            android:title="Kezdőoldal"
-            app:iconSpaceReserved="false" />
-    </PreferenceCategory>
-
-    <PreferenceCategory
-        android:title="Weboldalak"
-        app:iconSpaceReserved="false">
-
-        <com.example.glassbrowser.GlassSwitchPreference
-            android:defaultValue="true"
-            android:key="open_in_apps"
-            android:summary="Ha egy linkhez van telepített alkalmazás (YouTube, Reddit, X, Facebook…), a link abban nyílik meg. A címsorba beírt címek mindig a böngészőben maradnak."
-            android:title="Linkek megnyitása alkalmazásban"
-            app:iconSpaceReserved="false" />
-
-        <com.example.glassbrowser.GlassSwitchPreference
-            android:defaultValue="false"
-            android:key="desktop_mode"
-            android:summary="Számítógépes nézetet kér az oldalaktól."
-            android:title="Asztali oldal"
-            app:iconSpaceReserved="false" />
-
-        <com.example.glassbrowser.GlassSwitchPreference
-            android:defaultValue="true"
-            android:key="third_party_cookies"
-            android:summary="Szükséges a Google-bejelentkezéshez és sok beágyazott tartalomhoz."
-            android:title="Harmadik féltől származó sütik"
-            app:iconSpaceReserved="false" />
-    </PreferenceCategory>
-
-    <PreferenceCategory
-        android:title="Üveg megjelenés"
+        android:key="sec_bar"
+        android:title="Keresősáv"
         app:iconSpaceReserved="false">
 
         <ListPreference
@@ -202,6 +194,12 @@
             app:min="0"
             app:showSeekBarValue="true"
             app:updatesContinuously="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="sec_status"
+        android:title="Állapotsor"
+        app:iconSpaceReserved="false">
 
         <com.example.glassbrowser.GlassSwitchPreference
             android:defaultValue="true"
@@ -228,6 +226,12 @@
             app:iconSpaceReserved="false"
             app:min="0"
             app:showSeekBarValue="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="sec_glass"
+        android:title="Üveghatás"
+        app:iconSpaceReserved="false">
 
         <com.example.glassbrowser.GlassSeekBarPreference
             android:defaultValue="2"
@@ -297,8 +301,28 @@
     </PreferenceCategory>
 
     <PreferenceCategory
-        android:title="Érintés"
+        android:key="sec_motion"
+        android:title="Animációk és érintés"
         app:iconSpaceReserved="false">
+
+        <com.example.glassbrowser.GlassSeekBarPreference
+            android:defaultValue="125"
+            android:key="anim_speed"
+            android:max="200"
+            android:summary="100 = normál, kisebb = lassabb, nagyobb = gyorsabb"
+            android:title="Animációk sebessége"
+            app:iconSpaceReserved="false"
+            app:min="50"
+            app:showSeekBarValue="true" />
+
+        <ListPreference
+            android:defaultValue="fade"
+            android:entries="@array/close_anim_names"
+            android:entryValues="@array/close_anim_values"
+            android:key="close_anim"
+            android:title="Lap bezárási animációja"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
 
         <com.example.glassbrowser.GlassSwitchPreference
             android:defaultValue="true"
@@ -336,6 +360,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="sec_google"
         android:title="Google-fiók"
         app:iconSpaceReserved="false">
 
@@ -384,6 +409,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="sec_privacy"
         android:title="Adatvédelem"
         app:iconSpaceReserved="false">
 

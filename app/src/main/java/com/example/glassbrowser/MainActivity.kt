@@ -710,7 +710,7 @@ var r=e.getBoundingClientRect();if(r.height<=0)return;
 var t=parseFloat(cs.top);var tall=r.height>=innerHeight*0.5;
 if(H>0&&!isNaN(t)&&t>=0&&t<4){
 if(!tall){e.__gbT=t;e.__gbH=H;e.style.setProperty('top',(t+H)+'px','important');
-if(pos==='fixed'&&r.width>=innerWidth*0.9){e.__gbW=1;window.__gbHdrEls.push(e);}return;}
+if(r.width>=innerWidth*0.9&&r.top<H+innerHeight*0.2){e.__gbW=1;window.__gbHdrEls.push(e);}return;}
 if(pos==='fixed'){var pt=parseFloat(cs.paddingTop)||0;e.__gbP=pt;e.__gbH=H;e.style.setProperty('padding-top',(pt+H)+'px','important');return;}}
 var b=parseFloat(cs.bottom);
 if(B>0&&pos==='fixed'&&!isNaN(b)&&b>=0&&b<4&&r.height<innerHeight*0.6){e.__gbBo=b;e.__gbBB=B;e.style.setProperty('bottom',(b+B)+'px','important');}}
@@ -718,6 +718,10 @@ function full(){if(!d.body)return;var all=d.body.getElementsByTagName('*');for(v
 window.__gbHdrNow=function(){var L=window.__gbHdrEls;for(var i=0;i<L.length;i++){var e=L[i];if(!e.isConnected)continue;
 var r=e.getBoundingClientRect();if(r.height>0&&r.top<=H+2&&r.bottom>H+8){var c=getComputedStyle(e);if(c.visibility!=='hidden'&&c.opacity>0.5&&c.display!=='none')return 1;}}return 0;};
 full();
+if(!window.__gbScr&&window.GlassScroll){window.__gbScr=1;var raf=0,ly=-1,lt=null;
+d.addEventListener('scroll',function(ev){var t=ev.target;if(!t||t===d||t===d.documentElement||t===d.body)return;
+if(!t.clientHeight||t.clientHeight<innerHeight*0.6)return;lt=t;if(raf)return;
+raf=requestAnimationFrame(function(){raf=0;var y=Math.round(lt.scrollTop||0);if(y!==ly){ly=y;GlassScroll.inner(y);}});},true);}
 var key=H+'/'+B;if(window.__gbTimer!==key){window.__gbTimer=key;setTimeout(full,600);setTimeout(full,2000);}
 if(!window.__gbObs&&window.MutationObserver){var pend=[],tm=0;
 function flush(){tm=0;var p=pend;pend=[];for(var i=0;i<p.length;i++){var n=p[i];chk(n);
@@ -817,7 +821,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     val hdr = activeTab?.fixedHeader == true
                     val pad = if (overviewShown) 0f
                     else if (hdr) statusTop.toFloat()
-                    else (statusTop - (activeWebView?.scrollY ?: statusTop)).coerceAtLeast(0).toFloat()
+                    else (statusTop - (activeTab?.let { effScroll(it) } ?: statusTop)).coerceAtLeast(0).toFloat()
                     val amt = if (hdr) 0f else flowAmt * vis
                     if (amt <= 0.01f) {
                         // az oldal tetején (vagy kihalványított elmosásnál): csak a térköz kitöltése, élesen
@@ -1320,6 +1324,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         val tab = Tab(wv)
         tab.isPrivate = privateMode
         applyWebSettings(wv)
+        // belső görgetésű oldalak (pl. samsung.com): az oldal egy belső eleme görget, nem a WebView
+        wv.addJavascriptInterface(ScrollBridge(tab), "GlassScroll")
         // A kezdőlapon a hosszú nyomás csak a csempe szerkesztőjét nyitja meg: a WebView saját
         // reakciója (a link "kiemelése", húzása, szövegkijelölés) itt ki van kapcsolva.
         wv.setOnLongClickListener { Urls.isStart(wv.url.orEmpty()) }
@@ -1401,6 +1407,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tab.padColor = 0
                 tab.fixedHeader = false
                 tab.headerColor = 0
+                tab.innerScroll = 0
                 tab.translated = false
                 tab.trPending = false
                 if (tab === activeTab) {
@@ -1481,7 +1488,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     handler.postDelayed(padTrail, 260L)
                 }
                 onTranslateScroll(dy)
-                updateTopFade(scrollY)
+                updateTopFade(maxOf(scrollY, tab.innerScroll))
             }
         }
 
@@ -1588,7 +1595,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             wv.loadUrl(pending)
         }
         setCollapsed(false)
-        updateTopFade(wv.scrollY)
+        updateTopFade(effScroll(tab))
         syncUi()
         updateTabCount()
         updateLens()
@@ -2462,16 +2469,16 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 "(window.__gbHdrEls&&window.__gbHdrEls.length?1:0)+','+(window.__gbHdrNow?window.__gbHdrNow():0)"
             ) { r ->
                 val parts = r.orEmpty().trim('"').split(',')
-                val has = parts.getOrNull(0) == "1"
                 val now = parts.getOrNull(1) == "1"
-                if (has != tab.fixedHeader) {
-                    tab.fixedHeader = has
+                // Betöltéskor (az oldal tetején) dől el, van-e fejléc, és akkor mérjük a színét is;
+                // utána a szín már nem változik görgetéskor (mint a Safariban).
+                if (!tab.fixedHeader && now && effScroll(tab) < statusTop) {
+                    tab.fixedHeader = true
                     if (tab === activeTab) updateLens()
                 }
-                // a fejléc színét akkor mérjük, amikor éppen látszik
-                if (has && now) probeRow(tab, header = true)
+                if (tab.fixedHeader && tab.headerColor == 0 && now) probeRow(tab, header = true)
             }
-            if (wv.scrollY != 0) return@postDelayed
+            if (effScroll(tab) != 0) return@postDelayed
             probeRow(tab, header = false)
         }, delay)
     }
@@ -2537,6 +2544,36 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         val a = p.getOrNull(3)?.toFloatOrNull() ?: 1f
         if (a < 0.95f) return 0
         return Color.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b.toInt().coerceIn(0, 255))
+    }
+
+    /** Belső görgetés jelzése az oldalról (CSS képpont). */
+    inner class ScrollBridge(private val tab: Tab) {
+        @android.webkit.JavascriptInterface
+        fun inner(y: Int) {
+            handler.post {
+                val px = (y * resources.displayMetrics.density).toInt()
+                val dy = px - tab.innerScroll
+                tab.innerScroll = px
+                if (tab === activeTab && !overviewShown) {
+                    updateTopFade(effScroll(tab))
+                    if (docked && !dockTop) onDockScroll(effScroll(tab), dy)
+                    onTranslateScroll(dy)
+                    updateLens()
+                    if (!padRecheckPending) {
+                        padRecheckPending = true
+                        handler.postDelayed(padRecheck, 120L)
+                    }
+                    handler.removeCallbacks(padTrail)
+                    handler.postDelayed(padTrail, 260L)
+                }
+            }
+        }
+    }
+
+    /** A lap tényleges görgetése: a WebView-é, vagy (ha az oldal belül görget) a belső elemé. */
+    private fun effScroll(tab: Tab?): Int {
+        if (tab == null) return 0
+        return maxOf(tab.webView.scrollY, tab.innerScroll)
     }
 
     /** Ennek változása megszakítja a "repülő" kép függőben lévő eltüntetését. */

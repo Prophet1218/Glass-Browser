@@ -31,6 +31,8 @@ class Tab(val webView: GlassWebView) {
     var fixedHeader: Boolean = false
     /** A rögzített fejléc színe (amikor látszott), 0 = még nem ismert. */
     var headerColor: Int = 0
+    /** Belső görgetés (képpont), ha az oldal nem a WebView-t görgeti, hanem egy belső elemet. */
+    var innerScroll: Int = 0
 }
 
 object Urls {

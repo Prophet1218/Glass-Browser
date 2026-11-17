@@ -44,7 +44,7 @@ class TabAdapter(
         val tab = tabs[position]
         val start = Urls.isStart(tab.url)
 
-        holder.title.text = tab.title.ifBlank { if (start) "Kezdőlap" else Urls.host(tab.url) }
+        holder.title.text = tab.title.ifBlank { if (start) L.t("Kezdőlap") else Urls.host(tab.url) }
         // (újrahasznosított sornál a beúszó animáció állapota ne maradjon rajta)
         // (egy közben érkező frissítés se ugrassa a beúszó animációt)
         val ta = titleAlpha()

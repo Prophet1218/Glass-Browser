@@ -7,6 +7,24 @@
         app:iconSpaceReserved="false">
 
         <ListPreference
+            android:defaultValue="hu"
+            android:entries="@array/language_names"
+            android:entryValues="@array/language_values"
+            android:key="app_language"
+            android:title="A felület nyelve"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            android:defaultValue="auto"
+            android:entries="@array/translate_names"
+            android:entryValues="@array/translate_values"
+            android:key="translate_lang"
+            android:title="Fordítás célnyelve"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
             android:defaultValue="system"
             android:entries="@array/app_theme_names"
             android:entryValues="@array/app_theme_values"

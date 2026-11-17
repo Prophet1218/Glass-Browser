@@ -27,6 +27,7 @@ class ScriptsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         ThemeHelper.apply(prefs)
+        L.init(this)
         super.onCreate(savedInstanceState)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         scripts = UserScripts.load(prefs)
@@ -36,12 +37,12 @@ class ScriptsActivity : AppCompatActivity() {
         column.orientation = LinearLayout.VERTICAL
 
         val info = TextView(this)
-        info.text = "A szkriptek az oldal betöltése után futnak le. Koppints egy szkriptre a szerkesztéshez."
+        info.text = L.t("A szkriptek az oldal betöltése után futnak le. Koppints egy szkriptre a szerkesztéshez.")
         info.setPadding(pad, pad, pad, pad / 2)
         column.addView(info)
 
         val add = Button(this)
-        add.text = "＋  Új szkript"
+        add.text = L.t("＋  Új szkript")
         add.setOnClickListener { edit(-1) }
         val addLp = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -65,7 +66,7 @@ class ScriptsActivity : AppCompatActivity() {
 
     private fun refresh() {
         adapter.clear()
-        adapter.addAll(scripts.map { (if (it.enabled) "✓  " else "✕  ") + it.name.ifBlank { "(névtelen)" } })
+        adapter.addAll(scripts.map { (if (it.enabled) "✓  " else "✕  ") + it.name.ifBlank { L.t("(névtelen)") } })
         adapter.notifyDataSetChanged()
     }
 
@@ -78,19 +79,19 @@ class ScriptsActivity : AppCompatActivity() {
         box.setPadding(pad, pad / 2, pad, 0)
 
         val name = EditText(this)
-        name.hint = "Név"
+        name.hint = L.t("Név")
         name.setText(script.name)
         name.inputType = InputType.TYPE_CLASS_TEXT
         box.addView(name)
 
         val match = EditText(this)
-        match.hint = "Hol fusson? (pl. youtube.com – üresen mindenhol)"
+        match.hint = L.t("Hol fusson? (pl. youtube.com – üresen mindenhol)")
         match.setText(script.match)
         match.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         box.addView(match)
 
         val code = EditText(this)
-        code.hint = "JavaScript kód"
+        code.hint = L.t("JavaScript kód")
         code.setText(script.code)
         code.typeface = Typeface.MONOSPACE
         code.textSize = 13f
@@ -102,14 +103,14 @@ class ScriptsActivity : AppCompatActivity() {
         box.addView(code)
 
         val enabled = CheckBox(this)
-        enabled.text = "Bekapcsolva"
+        enabled.text = L.t("Bekapcsolva")
         enabled.isChecked = script.enabled
         box.addView(enabled)
 
         val builder = AlertDialog.Builder(this)
-            .setTitle(if (index >= 0) "Szkript szerkesztése" else "Új szkript")
+            .setTitle(if (index >= 0) L.t("Szkript szerkesztése") else L.t("Új szkript"))
             .setView(box)
-            .setPositiveButton("Mentés") { _, _ ->
+            .setPositiveButton(L.t("Mentés")) { _, _ ->
                 script.name = name.text.toString().trim()
                 script.match = match.text.toString().trim()
                 script.code = code.text.toString()
@@ -118,9 +119,9 @@ class ScriptsActivity : AppCompatActivity() {
                 UserScripts.save(prefs, scripts)
                 refresh()
             }
-            .setNegativeButton("Mégse", null)
+            .setNegativeButton(L.t("Mégse"), null)
         if (index >= 0) {
-            builder.setNeutralButton("Törlés") { _, _ ->
+            builder.setNeutralButton(L.t("Törlés")) { _, _ ->
                 scripts.removeAt(index)
                 UserScripts.save(prefs, scripts)
                 refresh()

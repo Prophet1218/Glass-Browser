@@ -47,10 +47,10 @@ import androidx.preference.SwitchPreference
 object AppIcons {
     const val DEFAULT = "frost_blue"
 
-    val styles = listOf("flat" to "Sima", "frost" to "Matt üveg", "liquid" to "Folyékony üveg")
-    val colors = listOf(
-        "blue" to "kék", "purple" to "lila", "green" to "zöld",
-        "orange" to "narancs", "pink" to "rózsaszín", "graphite" to "grafit"
+    val styles get() = listOf("flat" to L.t("Sima"), "frost" to L.t("Matt üveg"), "liquid" to L.t("Folyékony üveg"))
+    val colors get() = listOf(
+        "blue" to L.t("kék"), "purple" to L.t("lila"), "green" to L.t("zöld"),
+        "orange" to L.t("narancs"), "pink" to L.t("rózsaszín"), "graphite" to L.t("grafit")
     )
 
     private fun aliasName(key: String): String =
@@ -109,6 +109,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(PreferenceManager.getDefaultSharedPreferences(this))
+        L.init(this)
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -119,6 +120,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         setContentView(R.layout.activity_settings)
         settingsRoot = findViewById(R.id.settingsRoot)
+        L.tree(settingsRoot)
         findViewById<View>(R.id.settingsBack).setOnClickListener { finish() }
         // Üveghatás: a háttér a böngésző elmosott pillanatképe (a főablak készíti megnyitáskor)
         val bg = findViewById<ImageView>(R.id.settingsBg)
@@ -219,6 +221,37 @@ class SettingsFragment : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.preferences, rootKey)
         val act = requireActivity() as SettingsActivity
+        L.prefs(preferenceScreen)
+
+        // nyelvváltás: a beállítások képernyő azonnal az új nyelven jelenik meg
+        findPreference<ListPreference>("app_language")?.setOnPreferenceChangeListener { _, _ ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                L.init(act)
+                act.recreate()
+            }
+            true
+        }
+
+        // rögzített keresősávnál nincs üveg: a típusa ilyenkor nem állítható
+        fun updateGlassEnabled(style: String?) {
+            val floating = style == null || style == "floating"
+            findPreference<ListPreference>("glass_mode")?.let { g ->
+                g.isEnabled = floating
+                if (floating) {
+                    g.summaryProvider = ListPreference.SimpleSummaryProvider.getInstance()
+                } else {
+                    g.summaryProvider = null
+                    g.summary = L.t("Rögzített keresősávnál az üveg ki van kapcsolva.")
+                }
+            }
+        }
+        updateGlassEnabled(
+            PreferenceManager.getDefaultSharedPreferences(requireContext()).getString("bar_style", "floating")
+        )
+        findPreference<ListPreference>("bar_style")?.setOnPreferenceChangeListener { _, v ->
+            updateGlassEnabled(v as? String)
+            true
+        }
 
         findPreference<ListPreference>("app_theme")?.setOnPreferenceChangeListener { _, value ->
             // az új érték még nincs elmentve, ezért közvetlenül alkalmazzuk
@@ -251,7 +284,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
             findPreference<SeekBarPreference>("glass_dispersion")?.value = 0
             findPreference<SeekBarPreference>("glass_dark")?.value = 0
             findPreference<SwitchPreference>("glass_rim")?.isChecked = true
-            Toast.makeText(requireContext(), "Üvegbeállítások visszaállítva", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), L.t("Üvegbeállítások visszaállítva"), Toast.LENGTH_SHORT).show()
             true
         }
 
@@ -268,15 +301,19 @@ class SettingsFragment : PreferenceFragmentCompat() {
             val url = PreferenceManager.getDefaultSharedPreferences(requireContext())
                 .getString("adblock_url", "").orEmpty().trim()
             if (url.isEmpty()) {
-                Toast.makeText(requireContext(), "Nincs megadva szűrőlista-cím", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), L.t("Nincs megadva szűrőlista-cím"), Toast.LENGTH_SHORT).show()
             } else {
-                pref.summary = "Letöltés…"
+                pref.summary = L.t("Letöltés…")
                 val appContext = requireContext().applicationContext
                 AdBlock.update(appContext, url) { ok, count ->
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         Toast.makeText(
                             appContext,
-                            if (ok) "Szűrőlista frissítve: $count domain" else "A letöltés nem sikerült",
+                            if (ok) {
+                                if (L.en) "Filter list updated: $count domains" else "Szűrőlista frissítve: $count domain"
+                            } else {
+                                L.t("A letöltés nem sikerült")
+                            },
                             Toast.LENGTH_LONG
                         ).show()
                         if (isAdded) updateAdblockSummary()
@@ -312,7 +349,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 }
                 Toast.makeText(
                     requireContext(),
-                    "Keresd a telefon beállításaiban: Jelszavak és automatikus kitöltés",
+                    L.t("Keresd a telefon beállításaiban: Jelszavak és automatikus kitöltés"),
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -321,20 +358,20 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
         findPreference<Preference>("google_signout")?.setOnPreferenceClickListener {
             confirm(
-                "Kijelentkezés",
-                "Ez az összes weboldalról kijelentkeztet, mert minden süti törlődik. Folytatod?"
+                L.t("Kijelentkezés"),
+                L.t("Ez az összes weboldalról kijelentkeztet, mert minden süti törlődik. Folytatod?")
             ) {
                 clearCookies()
                 updateGoogleStatus()
-                Toast.makeText(requireContext(), "Kijelentkeztél", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), L.t("Kijelentkeztél"), Toast.LENGTH_SHORT).show()
             }
             true
         }
 
         findPreference<Preference>("clear_data")?.setOnPreferenceClickListener {
             confirm(
-                "Böngészési adatok törlése",
-                "A sütik, a gyorsítótár, a helyi tárolók és az előzmények törlődnek."
+                L.t("Böngészési adatok törlése"),
+                L.t("A sütik, a gyorsítótár, a helyi tárolók és az előzmények törlődnek.")
             ) {
                 clearCookies()
                 WebStorage.getInstance().deleteAllData()
@@ -343,7 +380,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 act.result.putExtra(SettingsActivity.EXTRA_CLEAR_CACHE, true)
                 act.commit()
                 updateGoogleStatus()
-                Toast.makeText(requireContext(), "Adatok törölve", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), L.t("Adatok törölve"), Toast.LENGTH_SHORT).show()
             }
             true
         }
@@ -450,9 +487,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
         val act = activity as? SettingsActivity
         dialog = AlertDialog.Builder(ctx)
-            .setTitle("Alkalmazásikon")
+            .setTitle(L.t("Alkalmazásikon"))
             .setView(column)
-            .setNegativeButton("Mégse", null)
+            .setNegativeButton(L.t("Mégse"), null)
             .setOnDismissListener { act?.setDialogBlur(false) }
             .show()
         act?.setDialogBlur(true)
@@ -465,10 +502,10 @@ class SettingsFragment : PreferenceFragmentCompat() {
             PreferenceManager.getDefaultSharedPreferences(ctx).edit().putString("app_icon", key).apply()
             updateIconSummary()
             Toast.makeText(
-                ctx, "Ikon átállítva. A kezdőképernyőn néhány másodperc múlva frissül.", Toast.LENGTH_LONG
+                ctx, L.t("Ikon átállítva. A kezdőképernyőn néhány másodperc múlva frissül."), Toast.LENGTH_LONG
             ).show()
         } else {
-            Toast.makeText(ctx, "Az ikont nem sikerült átállítani", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, L.t("Az ikont nem sikerült átállítani"), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -500,7 +537,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     private fun updateAdblockSummary() {
         findPreference<Preference>("adblock_update")?.summary =
-            "Jelenleg ${AdBlock.count} domain van a listán. Koppints a teljes lista letöltéséhez."
+            if (L.en) "${AdBlock.count} domains on the list. Tap to download the full list."
+            else "Jelenleg ${AdBlock.count} domain van a listán. Koppints a teljes lista letöltéséhez."
     }
 
     private fun clearCookies() {
@@ -513,15 +551,15 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val cookies = CookieManager.getInstance().getCookie("https://accounts.google.com").orEmpty()
         val signedIn = cookies.contains("SID=")
         findPreference<Preference>("google_status")?.summary =
-            if (signedIn) "Be vagy jelentkezve a Google-fiókodba." else "Nem vagy bejelentkezve."
+            if (signedIn) L.t("Be vagy jelentkezve a Google-fiókodba.") else L.t("Nem vagy bejelentkezve.")
     }
 
     private fun confirm(title: String, message: String, action: () -> Unit) {
         AlertDialog.Builder(requireContext())
             .setTitle(title)
             .setMessage(message)
-            .setPositiveButton("Igen") { _, _ -> action() }
-            .setNegativeButton("Mégse", null)
+            .setPositiveButton(L.t("Igen")) { _, _ -> action() }
+            .setNegativeButton(L.t("Mégse"), null)
             .setOnDismissListener { setBackgroundBlur(false) }
             .show()
         setBackgroundBlur(true)

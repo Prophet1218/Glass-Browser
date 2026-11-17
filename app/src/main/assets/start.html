@@ -106,14 +106,14 @@
 <!-- A keresőmezőre koppintva a böngésző saját keresősávja nyílik meg -->
 <div class="search" id="search" role="button" aria-label="Keresés vagy webcím">
   <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-  <span>Keresés vagy webcím</span>
+  <span id="searchText">Keresés vagy webcím</span>
 </div>
 
 <div class="tiles" id="tiles"></div>
 <div class="hint" id="hint">Tartsd nyomva a csempét a szerkesztéshez</div>
 
 <div class="section hidden" id="recentBox">
-  <h2>Legutóbb megnyitott</h2>
+  <h2 id="recentTitle">Legutóbb megnyitott</h2>
   <div class="list" id="recent"></div>
 </div>
 
@@ -192,7 +192,7 @@
       var add = el("a", "tile add"); add.href = "#";
       add.addEventListener("click", function (e) { e.preventDefault(); location.href = tileUrl(add, "new"); });
       var ic = el("div", "ic"); ic.textContent = "+";
-      var n = el("div", "name"); n.textContent = "Hozzáadás";
+      var n = el("div", "name"); n.textContent = T.add;
       add.appendChild(ic); add.appendChild(n);
       box.appendChild(add);
     }
@@ -216,8 +216,22 @@
     });
   }
 
+  // A felület szövegei (a böngésző nyelvbeállítása szerint)
+  var TEXT = {
+    hu: { search: "Keresés vagy webcím", recent: "Legutóbb megnyitott", hint: "Tartsd nyomva a csempét a szerkesztéshez",
+          add: "Hozzáadás", reset: "Visszaállítás", title: "Új lap", maps: "Térkép" },
+    en: { search: "Search or type URL", recent: "Recently opened", hint: "Press and hold a shortcut to edit it",
+          add: "Add", reset: "Reset", title: "New tab", maps: "Maps" }
+  };
+  var T = TEXT.hu;
+
   // A böngésző hívja meg: { tiles: [{title,url}], recent: [{title,url}] }
   window.glassData = function (data) {
+    T = TEXT[(data && data.lang) || "hu"] || TEXT.hu;
+    document.documentElement.lang = (data && data.lang) || "hu";
+    document.title = T.title;
+    document.getElementById("searchText").textContent = T.search;
+    document.getElementById("recentTitle").textContent = T.recent;
     var tiles = (data && data.tiles) ? data.tiles.slice() : [];
     // a hiányzó helyeket az alapértelmezettekkel töltjük fel (ha a böngésző nem pontos listát küld)
     if (!(data && data.exact)) {
@@ -228,10 +242,10 @@
     renderTiles(tiles, !!(data && data.exact));
     var hint = document.getElementById("hint");
     hint.innerHTML = "";
-    hint.appendChild(document.createTextNode("Tartsd nyomva a csempét a szerkesztéshez"));
+    hint.appendChild(document.createTextNode(T.hint));
     if (data && data.custom) {
       hint.appendChild(document.createTextNode(" · "));
-      var r = el("a"); r.href = "glass://tile/reset"; r.textContent = "Visszaállítás";
+      var r = el("a"); r.href = "glass://tile/reset"; r.textContent = T.reset;
       hint.appendChild(r);
     }
     renderRecent(data && data.recent);

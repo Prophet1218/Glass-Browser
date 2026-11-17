@@ -222,6 +222,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         ThemeHelper.apply(prefs)
+        // az "egyszerű üveg" megszűnt: helyette folyékony üveg
+        if (prefs.getString("glass_mode", "liquid") == "simple") {
+            prefs.edit().putString("glass_mode", "liquid").apply()
+        }
+        L.init(this)
         super.onCreate(savedInstanceState)
         AdBlock.init(this)
         HistoryStore.init(this)
@@ -288,6 +293,8 @@ class MainActivity : AppCompatActivity() {
         setupControls()
         setupOverview()
         setupInsets()
+        setupDockMenuButton()
+        L.tree(root)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -345,17 +352,22 @@ class MainActivity : AppCompatActivity() {
      */
     private fun applyGlassMode() {
         val d = resources.displayMetrics.density
-        val mode = prefs.getString("glass_mode", "liquid") ?: "liquid"
-        val blur = prefs.getInt("glass_blur", 2) * d
-        val refH = prefs.getInt("glass_refraction_height", 30) * d
-        val refO = prefs.getInt("glass_refraction_offset", 50) * d
-        val disp = prefs.getInt("glass_dispersion", 0) / 100f
-        val frost = mode == "frost"
         barStyle = when (prefs.getString("bar_style", "floating")) {
             "bottom" -> "bottom"
             "top" -> "top"
             else -> "floating"
         }
+        // Rögzített (Chrome-szerű) sávnál nincs üveg: tömör felületek, mint a Chrome-ban.
+        val mode = if (docked) "off" else when (prefs.getString("glass_mode", "liquid")) {
+            "frost" -> "frost"
+            "off" -> "off"
+            else -> "liquid"
+        }
+        val blur = prefs.getInt("glass_blur", 2) * d
+        val refH = prefs.getInt("glass_refraction_height", 30) * d
+        val refO = prefs.getInt("glass_refraction_offset", 50) * d
+        val disp = prefs.getInt("glass_dispersion", 0) / 100f
+        val frost = mode == "frost"
         lensBlur = if (frost) maxOf(blur * 2.4f, 16f * d) else blur
         // a menü és a javaslatok ugyanazt az üveget kapják, mint a keresősáv (együtt állíthatók)
         panelBlur = lensBlur
@@ -366,7 +378,7 @@ class MainActivity : AppCompatActivity() {
         topStrength = prefs.getInt("top_blur_strength", 10) * d
 
         lensActive = false
-        if (mode != "simple" && mode != "off" && Build.VERSION.SDK_INT >= 33 && !lensFailed) {
+        if (mode != "off" && Build.VERSION.SDK_INT >= 33 && !lensFailed) {
             try {
                 val l = lens ?: LensEffect(scene).also { lens = it }
                 if (frost) {
@@ -401,7 +413,7 @@ class MainActivity : AppCompatActivity() {
         }
         // elmosás nélkül (egyszerű üveg) tömörebb lap kell, különben a szöveg olvashatatlan lenne
         // kikapcsolt üvegnél teljesen tömör felületek
-        val plateAlpha = if (mode == "off") 255 else 205
+        val plateAlpha = 255
         val plate: Int? = when {
             lensActive -> null
             night -> Color.argb(plateAlpha, 27, 30, 38)
@@ -459,6 +471,7 @@ class MainActivity : AppCompatActivity() {
             barCenter.background = barSkins[1]
             barRight.background = barSkins[2]
         }
+        applyDockLayout()
         val lp = barRow.layoutParams as FrameLayout.LayoutParams
         val side = if (docked) dp(6) else dp(14)
         lp.marginStart = side
@@ -724,6 +737,7 @@ class MainActivity : AppCompatActivity() {
             intArrayOf(c, ColorUtils.setAlphaComponent(c, (Color.alpha(c) * 0.38f).toInt()))
         )
         listOf<ImageView>(iconBack, iconAdd, iconDone, btnMenu, btnReload).forEach { it.imageTintList = tint }
+        if (::dockMenuBtn.isInitialized) dockMenuBtn.imageTintList = tint
         urlField.setTextColor(c)
         urlField.setHintTextColor(ColorUtils.setAlphaComponent(c, (Color.alpha(c) * 0.58f).toInt()))
         overviewLabel.setTextColor(c)
@@ -741,7 +755,12 @@ class MainActivity : AppCompatActivity() {
         when (v) {
             is TextView -> {
                 val factor = (v.tag as? Float) ?: 1f
-                v.setTextColor(ColorUtils.setAlphaComponent(c, (Color.alpha(c) * factor).toInt()))
+                val col = ColorUtils.setAlphaComponent(c, (Color.alpha(c) * factor).toInt())
+                v.setTextColor(col)
+                // a menüsorok kis ikonjai a szöveggel együtt színeződnek (kicsit halványabban)
+                v.compoundDrawableTintList = ColorStateList.valueOf(
+                    ColorUtils.setAlphaComponent(c, (Color.alpha(c) * factor * 0.85f).toInt())
+                )
             }
             is ImageView -> v.imageTintList =
                 ColorStateList.valueOf(ColorUtils.setAlphaComponent(c, (Color.alpha(c) * 0.7f).toInt()))
@@ -958,7 +977,21 @@ class MainActivity : AppCompatActivity() {
         appliedDesktop = desktop
         AdBlock.enabled = prefs.getBoolean("adblock", true)
         userScripts = UserScripts.load(prefs).filter { it.enabled && it.code.isNotBlank() }
+        val wasEn = L.en
+        L.init(this)
+        if (wasEn != L.en) onLanguageChanged()
         applyGlassMode()
+    }
+
+    /** Nyelvváltás után minden felirat az új nyelvre vált (újraindítás nélkül). */
+    private fun onLanguageChanged() {
+        L.tree(root)
+        updateTabCount()
+        if (::tabAdapter.isInitialized) tabAdapter.notifyDataSetChanged()
+        if (!urlField.hasFocus()) setFieldText(displayText(currentUrl))
+        tabs.forEach { t ->
+            if (Urls.isStart(t.webView.url.orEmpty())) t.webView.evaluateJavascript(startPageJs(), null)
+        }
     }
 
     private fun handleSettingsResult(data: Intent?) {
@@ -1291,7 +1324,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateTabCount() {
         tabCount.text = tabs.size.toString()
-        overviewLabel.text = "${tabs.size} lap"
+        overviewLabel.text = if (L.en) {
+            "${tabs.size} " + if (tabs.size == 1) "tab" else "tabs"
+        } else {
+            "${tabs.size} lap"
+        }
     }
 
     private fun restoreTabs() {
@@ -2072,12 +2109,14 @@ class MainActivity : AppCompatActivity() {
             if (hasFocus) {
                 setCollapsed(false)
                 urlField.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                if (docked) btnReload.visibility = View.VISIBLE
                 setFieldText(if (Urls.isStart(currentUrl)) "" else currentUrl)
                 lastTyped = ""
                 urlField.post { urlField.selectAll() }
                 showSearchPage()
             } else {
-                urlField.gravity = Gravity.CENTER
+                urlField.gravity = if (docked) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.CENTER
+                if (docked) btnReload.visibility = View.GONE
                 setFieldText(displayText(currentUrl))
                 hideSuggestions()
             }
@@ -2172,6 +2211,7 @@ class MainActivity : AppCompatActivity() {
         fade(overviewLabel, overviewMode, animate)
         fade(tabCount, !overviewMode, animate)
         fade(iconDone, overviewMode, animate)
+        applyDockLayout()
     }
 
     /**
@@ -2498,9 +2538,9 @@ class MainActivity : AppCompatActivity() {
             searchList.removeAllViews()
             val hint = TextView(this)
             hint.text = when (searchTab) {
-                1 -> "Még nincs könyvjelző. Egy oldalt a ⋯ menü „Könyvjelző hozzáadása” pontjával menthetsz el."
-                2 -> "Nincs találat az előzményekben."
-                else -> "Írj be egy webcímet vagy keresőszót."
+                1 -> L.t("Még nincs könyvjelző. Egy oldalt a ⋯ menü „Könyvjelző hozzáadása” pontjával menthetsz el.")
+                2 -> L.t("Nincs találat az előzményekben.")
+                else -> L.t("Írj be egy webcímet vagy keresőszót.")
             }
             hint.textSize = 15f
             hint.setTextColor(dim)
@@ -2542,7 +2582,7 @@ class MainActivity : AppCompatActivity() {
             if (searchTab == 1 && url != null) {
                 row.setOnLongClickListener {
                     BookmarkStore.remove(applicationContext, url)
-                    Toast.makeText(this, "Könyvjelző törölve", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, L.t("Könyvjelző törölve"), Toast.LENGTH_SHORT).show()
                     renderSearch()
                     true
                 }
@@ -2577,12 +2617,18 @@ class MainActivity : AppCompatActivity() {
         return RectF(l, t, l + v.width, t + v.height)
     }
 
-    private fun menuRow(text: String, enabled: Boolean = true, action: () -> Unit) {
+    private fun menuRow(text: String, enabled: Boolean = true, icon: Int = 0, check: Boolean = false, action: () -> Unit) {
         val tv = TextView(this)
         tv.text = text
-        tv.textSize = 17f
+        tv.textSize = 16.5f
         tv.tag = if (enabled) 1f else 0.38f      // a szín szorzója, lásd tintTree
-        tv.setPadding(dp(22), dp(14), dp(22), dp(14))
+        tv.setPadding(dp(18), dp(13), dp(22), dp(13))
+        tv.gravity = Gravity.CENTER_VERTICAL
+        tv.compoundDrawablePadding = dp(16)
+        val sz = dp(20)
+        val start = if (icon != 0) ContextCompat.getDrawable(this, icon)?.mutate()?.apply { setBounds(0, 0, sz, sz) } else null
+        val end = if (check) ContextCompat.getDrawable(this, R.drawable.ic_m_check)?.mutate()?.apply { setBounds(0, 0, sz, sz) } else null
+        tv.setCompoundDrawablesRelative(start, null, end, null)
         tv.isEnabled = enabled
         val ta = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
         tv.background = ta.getDrawable(0)
@@ -2603,6 +2649,86 @@ class MainActivity : AppCompatActivity() {
         urlField.post { selectSearchTab(index, animate = true) }
     }
 
+    /** A rögzített sáv jobb szélső menügombja (mint a Chrome-ban). */
+    private lateinit var dockMenuBtn: ImageButton
+
+    private fun setupDockMenuButton() {
+        val b = ImageButton(this)
+        b.setImageResource(R.drawable.ic_more)
+        b.background = null
+        b.contentDescription = L.t("Menü")
+        b.setOnClickListener { if (menuVisible) hideMenu() else showMenu() }
+        b.visibility = View.GONE
+        barRow.addView(b, LinearLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.MATCH_PARENT))
+        dockMenuBtn = b
+        b.imageTintList = ColorStateList.valueOf(contentColor ?: Color.WHITE)
+        applyDockLayout()
+    }
+
+    /** Ahonnan a menü kinyílik: lebegő sávnál a kapszula menügombja, rögzítettnél a jobb szélső. */
+    private fun menuAnchor(): View =
+        if (docked && ::dockMenuBtn.isInitialized) dockMenuBtn else btnMenu
+
+    /**
+     * Rögzített sáv, Chrome-elrendezés: [ cím mező (kapszula) ] [ lapok ] [ ⋮ ]. A vissza gomb
+     * nincs a sávon (a rendszer vissza gesztusa azt intézi), a lapváltóban viszont bal oldalt
+     * megjelenik az új lap (+) gomb. Lebegő sávnál minden a régi helyén van.
+     */
+    private fun applyDockLayout() {
+        if (!::dockMenuBtn.isInitialized) return
+        if (docked) {
+            barLeft.visibility = if (barOverview) View.VISIBLE else View.GONE
+            btnMenu.visibility = View.GONE
+            btnReload.visibility = if (urlField.hasFocus()) View.VISIBLE else View.GONE
+            dockMenuBtn.visibility = if (barOverview) View.INVISIBLE else View.VISIBLE
+            (barCenter.layoutParams as LinearLayout.LayoutParams).marginStart = if (barOverview) dp(8) else dp(4)
+            browseRow.setPadding(dp(14), 0, dp(6), 0)
+            if (!urlField.hasFocus()) urlField.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+        } else {
+            barLeft.visibility = View.VISIBLE
+            btnMenu.visibility = View.VISIBLE
+            btnReload.visibility = View.VISIBLE
+            dockMenuBtn.visibility = View.GONE
+            (barCenter.layoutParams as LinearLayout.LayoutParams).marginStart = dp(8)
+            browseRow.setPadding(dp(6), 0, dp(6), 0)
+            if (!urlField.hasFocus()) urlField.gravity = Gravity.CENTER
+        }
+        barCenter.requestLayout()
+    }
+
+    // ---------------------------------------------------------------- Google Fordító
+
+    private fun translateTarget(): String {
+        val v = prefs.getString("translate_lang", "auto") ?: "auto"
+        return if (v == "auto") (if (L.en) "en" else "hu") else v
+    }
+
+    /** A Google Fordító "*.translate.goog" címen mutatja a lefordított oldalt. */
+    private fun isTranslated(url: String): Boolean =
+        Uri.parse(url).host?.endsWith(".translate.goog") == true
+
+    private fun translatePage(url: String) {
+        if (url.isBlank() || Urls.isStart(url)) return
+        val target = translateTarget()
+        val t = "https://translate.google.com/translate?sl=auto&tl=$target&hl=$target&u=" + Uri.encode(url)
+        activeTab?.let { it.stayInBrowser = true }
+        activeWebView?.loadUrl(t)
+    }
+
+    /** Vissza az eredeti oldalra: a fordító címéből visszaállítjuk az eredeti webcímet. */
+    private fun showOriginal() {
+        val wv = activeWebView ?: return
+        val u = Uri.parse(wv.url.orEmpty())
+        val host = u.host.orEmpty().removeSuffix(".translate.goog")
+        // a fordító a pontokat kötőjelre, a kötőjeleket dupla kötőjelre cseréli
+        val original = host.replace("--", "\u0000").replace('-', '.').replace("\u0000", "-")
+        val b = Uri.Builder().scheme("https").authority(original).encodedPath(u.encodedPath)
+        val q = u.queryParameterNames.filterNot { it.startsWith("_x_tr_") }
+        q.forEach { k -> u.getQueryParameters(k).forEach { v -> b.appendQueryParameter(k, v) } }
+        u.encodedFragment?.let { b.encodedFragment(it) }
+        wv.loadUrl(b.build().toString())
+    }
+
     private fun showMenu() {
         if (menuVisible || overviewShown || overviewBusy) return
         releaseFocus()
@@ -2618,9 +2744,17 @@ class MainActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         )
         menuItems.removeAllViews()
-        menuRow("Új lap") { openNewTab(null, focusField = true) }
-        menuRow("Előre", activeWebView?.canGoForward() == true) { activeWebView?.goForward() }
-        menuRow("Megosztás", !Urls.isStart(currentUrl)) {
+        menuRow(L.t("Új lap"), icon = R.drawable.ic_m_add) { openNewTab(null, focusField = true) }
+        menuRow(L.t("Előre"), activeWebView?.canGoForward() == true, icon = R.drawable.ic_m_forward) {
+            activeWebView?.goForward()
+        }
+        if (docked) {
+            // a rögzített sávon nincs külön frissítés gomb (mint a Chrome-ban, a menüben van)
+            menuRow(L.t("Újratöltés"), activeTab != null, icon = R.drawable.ic_m_reload) {
+                activeTab?.let { if (it.loading) it.webView.stopLoading() else it.webView.reload() }
+            }
+        }
+        menuRow(L.t("Megosztás"), !Urls.isStart(currentUrl), icon = R.drawable.ic_m_share) {
             val send = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, currentUrl)
@@ -2630,37 +2764,52 @@ class MainActivity : AppCompatActivity() {
         val pageUrl = currentUrl
         val canMark = !Urls.isStart(pageUrl)
         if (canMark && BookmarkStore.has(pageUrl)) {
-            menuRow("Könyvjelző eltávolítása") {
+            menuRow(L.t("Könyvjelző eltávolítása"), icon = R.drawable.ic_m_star) {
                 BookmarkStore.remove(applicationContext, pageUrl)
-                Toast.makeText(this, "Könyvjelző eltávolítva", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, L.t("Könyvjelző eltávolítva"), Toast.LENGTH_SHORT).show()
             }
         } else {
-            menuRow("Könyvjelző hozzáadása", canMark) {
+            menuRow(L.t("Könyvjelző hozzáadása"), canMark, icon = R.drawable.ic_m_star_border) {
                 BookmarkStore.add(applicationContext, pageUrl, activeTab?.title.orEmpty())
-                Toast.makeText(this, "Könyvjelző mentve", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, L.t("Könyvjelző mentve"), Toast.LENGTH_SHORT).show()
             }
         }
-        menuRow("Könyvjelzők") { openSearchTab(1) }
-        menuRow("Előzmények") { openSearchTab(2) }
+        menuRow(L.t("Könyvjelzők"), icon = R.drawable.ic_m_bookmarks) { openSearchTab(1) }
+        menuRow(L.t("Előzmények"), icon = R.drawable.ic_m_history) { openSearchTab(2) }
+        // Google Fordító: az oldal lefordítva nyílik meg (a fordított oldalról vissza is lehet váltani)
+        val translated = isTranslated(pageUrl)
+        menuRow(
+            if (translated) L.t("Eredeti oldal") else L.t("Oldal fordítása"),
+            canMark, icon = R.drawable.ic_m_translate
+        ) {
+            if (translated) showOriginal() else translatePage(pageUrl)
+        }
         val desktop = prefs.getBoolean("desktop_mode", false)
-        menuRow(if (desktop) "Asztali oldal   ✓" else "Asztali oldal") {
+        menuRow(L.t("Asztali oldal"), icon = R.drawable.ic_m_desktop, check = desktop) {
             prefs.edit().putBoolean("desktop_mode", !desktop).apply()
             applyAllSettings()
         }
-        menuRow("Beállítások") { openSettings() }
+        menuRow(L.t("Beállítások"), icon = R.drawable.ic_m_settings) { openSettings() }
         tintTree(menuItems, contentColor ?: Color.WHITE)
 
-        // a panel a középső kapszula bal széle fölé kerül (ott van a menügomb)
-        visualRect(barCenter, tmpRect)
+        // a panel a menügomb mellé kerül: lebegő sávnál a középső kapszula bal széle fölé,
+        // rögzített sávnál (mint a Chrome-ban) a jobb szélső menügombhoz
+        visualRect(if (docked) menuAnchor() else barCenter, tmpRect)
         val lp = menuPanel.layoutParams as FrameLayout.LayoutParams
         lp.leftMargin = tmpRect.left.toInt().coerceAtLeast(0)
+        lp.rightMargin = 0
+        val hGravity = if (docked) Gravity.RIGHT else Gravity.LEFT
+        if (docked) {
+            lp.leftMargin = 0
+            lp.rightMargin = (root.width - tmpRect.right).toInt().coerceAtLeast(dp(6))
+        }
         if (dockTop) {
             // felül rögzített sávnál a menü lefelé nyílik
-            lp.gravity = Gravity.TOP or Gravity.LEFT
+            lp.gravity = Gravity.TOP or hGravity
             lp.topMargin = tmpRect.bottom.toInt() + dp(8)
             lp.bottomMargin = 0
         } else {
-            lp.gravity = Gravity.BOTTOM or Gravity.LEFT
+            lp.gravity = Gravity.BOTTOM or hGravity
             lp.topMargin = 0
             lp.bottomMargin = (root.height - tmpRect.top).toInt().coerceAtLeast(0) + dp(8)
         }
@@ -2674,13 +2823,13 @@ class MainActivity : AppCompatActivity() {
         // animáció közben a sorok egy rétegként mozognak (nem rajzolódnak újra képkockánként)
         menuItems.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         menuPanel.doOnLayout {
-            val origin = rectOf(btnMenu, menuPanel)
+            val origin = rectOf(menuAnchor(), menuPanel)
             menuPanel.pivotX = origin.centerX()
             menuPanel.pivotY = origin.centerY()
             menuAnim = menuClip.morph(
                 opening = true,
                 from = origin,
-                fromRadius = btnMenu.height / 2f,
+                fromRadius = menuAnchor().height / 2f,
                 toRadius = dp(26).toFloat(),
                 durationMs = 540,
                 onFrame = { f -> menuFrame(f) },
@@ -2761,8 +2910,8 @@ class MainActivity : AppCompatActivity() {
         }
         menuAnim = menuClip.morph(
             opening = false,
-            from = rectOf(btnMenu, menuPanel),
-            fromRadius = btnMenu.height / 2f,
+            from = rectOf(menuAnchor(), menuPanel),
+            fromRadius = menuAnchor().height / 2f,
             toRadius = dp(26).toFloat(),
             durationMs = 380,
             onFrame = { f -> menuFrame(f) },
@@ -2897,7 +3046,7 @@ class MainActivity : AppCompatActivity() {
             list.add(tileName(e.url) to "https://$h")
         }
         DEFAULT_TILES.forEach { d ->
-            if (list.size < 8 && list.none { Urls.host(it.second) == Urls.host(d.second) }) list.add(d)
+            if (list.size < 8 && list.none { Urls.host(it.second) == Urls.host(d.second) }) list.add(L.t(d.first) to d.second)
         }
         return list
     }
@@ -2939,12 +3088,12 @@ class MainActivity : AppCompatActivity() {
         if (arg == "reset") {
             formAnchor = null
             showGlassForm(
-                title = "Csempék visszaállítása",
-                message = "A kezdőlapon újra a leggyakrabban látogatott oldalaid jelennek meg.",
+                title = L.t("Csempék visszaállítása"),
+                message = L.t("A kezdőlapon újra a leggyakrabban látogatott oldalaid jelennek meg."),
                 fields = emptyList(),
                 buttons = listOf(
-                    GlassButton("Mégse") { },
-                    GlassButton("Visszaállítás", primary = true) { saveTiles(null) }
+                    GlassButton(L.t("Mégse")) { },
+                    GlassButton(L.t("Visszaállítás"), primary = true) { saveTiles(null) }
                 )
             )
             return
@@ -2956,13 +3105,13 @@ class MainActivity : AppCompatActivity() {
 
         val buttons = mutableListOf<GlassButton>()
         if (cur != null) {
-            buttons.add(GlassButton("Törlés", destructive = true) {
+            buttons.add(GlassButton(L.t("Törlés"), destructive = true) {
                 list.removeAt(idx)
                 saveTiles(list)
             })
         }
-        buttons.add(GlassButton("Mégse") { })
-        buttons.add(GlassButton("Mentés", primary = true) { values ->
+        buttons.add(GlassButton(L.t("Mégse")) { })
+        buttons.add(GlassButton(L.t("Mentés"), primary = true) { values ->
             var u = values[1].trim()
             if (u.isNotEmpty()) {
                 if (!u.contains("://")) u = "https://$u"
@@ -2972,12 +3121,12 @@ class MainActivity : AppCompatActivity() {
             }
         })
         showGlassForm(
-            title = if (cur != null) "Csempe szerkesztése" else "Új csempe",
+            title = if (cur != null) L.t("Csempe szerkesztése") else L.t("Új csempe"),
             message = null,
             fields = listOf(
-                GlassField("Név", cur?.first.orEmpty(), InputType.TYPE_CLASS_TEXT),
+                GlassField(L.t("Név"), cur?.first.orEmpty(), InputType.TYPE_CLASS_TEXT),
                 GlassField(
-                    "Webcím (pl. telex.hu)", cur?.second.orEmpty(),
+                    L.t("Webcím (pl. telex.hu)"), cur?.second.orEmpty(),
                     InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
                 )
             ),
@@ -3230,6 +3379,7 @@ class MainActivity : AppCompatActivity() {
         HistoryStore.recent(5).forEach { e -> recent.put(item(e.title, e.url)) }
         val data = JSONObject().put("tiles", tiles).put("recent", recent)
             .put("exact", true).put("custom", prefs.contains(KEY_SHORTCUTS))
+            .put("lang", if (L.en) "en" else "hu")
         return "window.glassData && window.glassData($data);"
     }
 
@@ -3254,7 +3404,8 @@ class MainActivity : AppCompatActivity() {
         val tab = activeTab ?: return
         val focused = urlField.hasFocus()
         progress.progress = tab.progress
-        progress.visibility = if (tab.loading && tab.progress < 100) View.VISIBLE else View.GONE
+        // a kék töltősáv nem kell
+        progress.visibility = View.GONE
         if (!focused) setFieldText(displayText(tab.url))
         iconBack.isEnabled = tab.webView.canGoBack()
         btnReload.setImageResource(if (focused || tab.loading) R.drawable.ic_close else R.drawable.ic_reload)

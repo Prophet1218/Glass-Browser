@@ -18,14 +18,50 @@
     <string-array name="glass_mode_names">
         <item>Folyékony üveg (fénytörés)</item>
         <item>Matt üveg (erős elmosás, fénytörés nélkül)</item>
-        <item>Egyszerű üveg (áttetsző, mosás nélkül)</item>
         <item>Kikapcsolva (tömör felületek, üveg nélkül)</item>
     </string-array>
     <string-array name="glass_mode_values">
         <item>liquid</item>
         <item>frost</item>
-        <item>simple</item>
         <item>off</item>
+    </string-array>
+
+    <string-array name="language_names">
+        <item>Magyar</item>
+        <item>English</item>
+    </string-array>
+    <string-array name="language_values">
+        <item>hu</item>
+        <item>en</item>
+    </string-array>
+
+    <string-array name="translate_names">
+        <item>A felület nyelve</item>
+        <item>Magyar</item>
+        <item>English</item>
+        <item>Német</item>
+        <item>Francia</item>
+        <item>Spanyol</item>
+        <item>Olasz</item>
+        <item>Román</item>
+        <item>Szlovák</item>
+        <item>Lengyel</item>
+        <item>Ukrán</item>
+        <item>Orosz</item>
+    </string-array>
+    <string-array name="translate_values">
+        <item>auto</item>
+        <item>hu</item>
+        <item>en</item>
+        <item>de</item>
+        <item>fr</item>
+        <item>es</item>
+        <item>it</item>
+        <item>ro</item>
+        <item>sk</item>
+        <item>pl</item>
+        <item>uk</item>
+        <item>ru</item>
     </string-array>
 
     <string-array name="bar_style_names">

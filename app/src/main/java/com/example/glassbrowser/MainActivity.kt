@@ -83,6 +83,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var hero: HeroView
     private lateinit var progress: ProgressBar
     private lateinit var barRow: LinearLayout
+    /** A rögzített (Chrome-szerű) keresősáv háttere. */
+    private lateinit var dockBg: View
+    private lateinit var dockSkin: GlassSkinDrawable
+    private val barSkins = ArrayList<GlassSkinDrawable>()
+    /** "floating" (lebegő kapszulák), "bottom" vagy "top" (rögzített sáv alul / felül). */
+    private var barStyle = "floating"
+    private val docked: Boolean get() = barStyle != "floating"
+    private val dockTop: Boolean get() = barStyle == "top"
+    /** A rendszer navigációs sávjának magassága és az utolsó alsó betét (billentyűzettel). */
+    private var navBottom = 0
+    private var lastBottom = 0
+    /** Igaz, amíg az üveg űrlap záródik (a tartalma ilyenkor gyorsabban tűnik el). */
+    private var formClosing = false
     private lateinit var barLeft: FrameLayout
     private lateinit var barCenter: FrameLayout
     private lateinit var barRight: FrameLayout
@@ -232,6 +245,7 @@ class MainActivity : AppCompatActivity() {
         hero = findViewById(R.id.hero)
         progress = findViewById(R.id.progress)
         barRow = findViewById(R.id.barRow)
+        dockBg = findViewById(R.id.dockBg)
         barLeft = findViewById(R.id.barLeft)
         barCenter = findViewById(R.id.barCenter)
         barRight = findViewById(R.id.barRight)
@@ -301,9 +315,13 @@ class MainActivity : AppCompatActivity() {
     private fun setupGlass() {
         val d = resources.displayMetrics.density
         // A keresősáv három része, a menü és a javaslatok ugyanazt a "bőrt" kapják: egyforma szín.
-        addSkin(barLeft, null)
-        addSkin(barCenter, null)
-        addSkin(barRight, null)
+        barSkins.add(addSkin(barLeft, null))
+        barSkins.add(addSkin(barCenter, null))
+        barSkins.add(addSkin(barRight, null))
+        // a rögzített sáv háttere: szögletes, perem nélkül (a képernyő széléig ér)
+        dockSkin = GlassSkinDrawable(d)
+        dockSkin.cornerRadius = 0f
+        dockBg.background = dockSkin
         addSkin(menuItems, 26f * d)
         setupSearchPage()
 
@@ -311,11 +329,12 @@ class MainActivity : AppCompatActivity() {
         applyContentColor(!night)
     }
 
-    private fun addSkin(view: View, radius: Float?) {
+    private fun addSkin(view: View, radius: Float?): GlassSkinDrawable {
         val skin = GlassSkinDrawable(resources.displayMetrics.density)
         skin.cornerRadius = radius
         view.background = skin
         skins.add(skin)
+        return skin
     }
 
     /**
@@ -332,16 +351,22 @@ class MainActivity : AppCompatActivity() {
         val refO = prefs.getInt("glass_refraction_offset", 50) * d
         val disp = prefs.getInt("glass_dispersion", 0) / 100f
         val frost = mode == "frost"
+        barStyle = when (prefs.getString("bar_style", "floating")) {
+            "bottom" -> "bottom"
+            "top" -> "top"
+            else -> "floating"
+        }
         lensBlur = if (frost) maxOf(blur * 2.4f, 16f * d) else blur
         // a menü és a javaslatok ugyanazt az üveget kapják, mint a keresősáv (együtt állíthatók)
         panelBlur = lensBlur
-        topBlurOn = prefs.getBoolean("top_blur", true)
+        // felül rögzített sávnál az állapotsor mögé is a sáv kerül: ott nincs külön felső elmosás
+        topBlurOn = prefs.getBoolean("top_blur", true) && !dockTop
         // csak a "band" (színsáv) és a "flow" (átúszó) stílus maradt
         topStyle = if (prefs.getString("top_style", "flow") == "band") "band" else "flow"
         topStrength = prefs.getInt("top_blur_strength", 10) * d
 
         lensActive = false
-        if (mode != "simple" && Build.VERSION.SDK_INT >= 33 && !lensFailed) {
+        if (mode != "simple" && mode != "off" && Build.VERSION.SDK_INT >= 33 && !lensFailed) {
             try {
                 val l = lens ?: LensEffect(scene).also { lens = it }
                 if (frost) {
@@ -375,18 +400,20 @@ class MainActivity : AppCompatActivity() {
             else -> 0.45f
         }
         // elmosás nélkül (egyszerű üveg) tömörebb lap kell, különben a szöveg olvashatatlan lenne
+        // kikapcsolt üvegnél teljesen tömör felületek
+        val plateAlpha = if (mode == "off") 255 else 205
         val plate: Int? = when {
             lensActive -> null
-            night -> Color.argb(205, 27, 30, 38)
-            else -> Color.argb(205, 255, 255, 255)
+            night -> Color.argb(plateAlpha, 27, 30, 38)
+            else -> Color.argb(plateAlpha, 248, 249, 251)
         }
-        val rimOn = prefs.getBoolean("glass_rim", true)
+        val rimOn = prefs.getBoolean("glass_rim", true) && mode != "off"
         bounceOn = prefs.getBoolean("bounce", true)
         bounceStrength = prefs.getInt("bounce_strength", 60) / 100f
         hapticOn = prefs.getBoolean("haptic", true)
         hapticStrength = prefs.getInt("haptic_strength", 50) / 100f
         // kikapcsolt felső elmosásnál az állapotsor mögött egyszínű (világos / sötét) háttér van
-        if (!topBlurOn) contentContainer.setBackgroundColor(bgColor)
+        if (!topBlurOn || docked) contentContainer.setBackgroundColor(bgColor)
         applyStatusColor()
         // sötétítés: fekete fátyol minden üvegfelületen
         glassShade = prefs.getInt("glass_dark", 0).coerceIn(0, 100) / 100f
@@ -396,6 +423,11 @@ class MainActivity : AppCompatActivity() {
             it.setShade((glassShade * 255f).toInt())
             it.setRim(rimOn)
         }
+        dockSkin.setTint(tintAlpha, plate)
+        dockSkin.setOverlay(overlay)
+        dockSkin.setShade((glassShade * 255f).toInt())
+        dockSkin.setRim(false)
+        applyBarStyle()
         if (!lensActive) applyContentColor(!night)
 
         tabs.forEach { applyWebTop(it.webView) }
@@ -404,11 +436,67 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Igaz, ha az oldal valóban átúszik az állapotsor mögött (az "átúszó" felső elmosás). */
-    private fun flowLayout(): Boolean = lensActive && topBlurOn && topStyle == "flow"
+    private fun flowLayout(): Boolean = lensActive && topBlurOn && topStyle == "flow" && !dockTop
+
+    /** A rögzített sáv magassága (a gombsor + körülötte kis térköz), a rendszersávok nélkül. */
+    private fun dockHeight(): Int = barRow.layoutParams.height + dp(8)
+
+    /**
+     * A keresősáv stílusa. Lebegő: három külön üvegkapszula a tartalom fölött. Rögzített: egy
+     * teljes szélességű sáv (üveg, matt üveg vagy tömör), az oldal pedig a sáv széléig tart, nem
+     * fut alá (mint a Chrome-ban). A középső mező ilyenkor egy halvány kapszula a sávon belül.
+     */
+    private fun applyBarStyle() {
+        if (docked && collapsed) setCollapsed(false)
+        dockBg.visibility = if (docked) View.VISIBLE else View.GONE
+        if (docked) {
+            barLeft.background = null
+            barRight.background = null
+            barCenter.background = GradientDrawable().apply { cornerRadius = dp(22).toFloat() }
+            updateDockPill()
+        } else {
+            barLeft.background = barSkins[0]
+            barCenter.background = barSkins[1]
+            barRight.background = barSkins[2]
+        }
+        val lp = barRow.layoutParams as FrameLayout.LayoutParams
+        val side = if (docked) dp(6) else dp(14)
+        lp.marginStart = side
+        lp.marginEnd = side
+        lp.gravity = if (dockTop) Gravity.TOP else Gravity.BOTTOM
+        barRow.layoutParams = lp
+        applyLayoutInsets()
+    }
+
+    /** A rögzített sáv középső mezőjének halvány kapszulája (a sáv szövegszínéhez igazodik). */
+    private fun updateDockPill() {
+        if (!docked) return
+        val c = contentColor ?: if (night) Color.WHITE else Color.BLACK
+        val light = Color.red(c) > 128
+        (barCenter.background as? GradientDrawable)?.setColor(
+            if (light) Color.argb(34, 255, 255, 255) else Color.argb(18, 0, 0, 0)
+        )
+    }
+
+    /** Minden, ami a rendszersávoktól és a sáv stílusától függ: margók, térközök. */
+    private fun applyLayoutInsets() {
+        val barHeight = barRow.layoutParams.height
+        val webTopY = if (dockTop) statusTop + dockHeight() else statusTop
+        (progress.layoutParams as FrameLayout.LayoutParams).topMargin = webTopY
+        tabList.setPadding(
+            dp(9), webTopY + dp(10), dp(9),
+            navBottom + if (dockTop) dp(24) else barHeight + dp(30)
+        )
+        tabs.forEach { applyWebTop(it.webView) }
+        applyBottomInset(lastBottom)
+        root.requestLayout()
+        updateLens()
+    }
 
     /** Az aktív WebView felső széle a képernyőn. */
     private fun webTop(): Int {
-        val wv = activeWebView ?: return statusTop
+        if (dockTop) return statusTop + dockHeight()
+        activeWebView ?: return statusTop
         return if (flowLayout()) 0 else statusTop
     }
 
@@ -420,9 +508,16 @@ class MainActivity : AppCompatActivity() {
     private fun applyWebTop(wv: GlassWebView) {
         val flow = flowLayout()
         val lp = wv.layoutParams as? FrameLayout.LayoutParams ?: return
-        val margin = if (flow) 0 else statusTop
-        if (lp.topMargin != margin) {
+        val margin = when {
+            dockTop -> statusTop + dockHeight()
+            flow -> 0
+            else -> statusTop
+        }
+        // alul rögzített sávnál az oldal a sáv tetejéig tart (nem fut alá)
+        val bottomMargin = if (docked && !dockTop) dockHeight() + navBottom else 0
+        if (lp.topMargin != margin || lp.bottomMargin != bottomMargin) {
             lp.topMargin = margin
+            lp.bottomMargin = bottomMargin
             wv.layoutParams = lp
         }
         // A WebView maga nem mozog (attól akadt és villant a kép): átúszó módban az OLDAL kap
@@ -543,9 +638,24 @@ class MainActivity : AppCompatActivity() {
             }
 
             // a keresősáv három része
-            barSlot(l, SLOT_CENTER, barCenter)
-            barSlot(l, SLOT_LEFT, barLeft)
-            barSlot(l, SLOT_RIGHT, barRight)
+            if (docked) {
+                // rögzített sáv: egyetlen, teljes szélességű üveg
+                if (dockBg.visibility == View.VISIBLE && dockBg.width > 0 && dockBg.height > 0) {
+                    visualRect(dockBg, tmpRect)
+                    l.setSlot(
+                        SLOT_CENTER, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
+                        0f, lensBlur, dockBg.alpha
+                    )
+                } else {
+                    l.clearSlot(SLOT_CENTER)
+                }
+                l.clearSlot(SLOT_LEFT)
+                l.clearSlot(SLOT_RIGHT)
+            } else {
+                barSlot(l, SLOT_CENTER, barCenter)
+                barSlot(l, SLOT_LEFT, barLeft)
+                barSlot(l, SLOT_RIGHT, barRight)
+            }
 
             // hárompontos menü: a kinyíló alakot követi
             val r = menuClip.current
@@ -619,7 +729,8 @@ class MainActivity : AppCompatActivity() {
         overviewLabel.setTextColor(c)
         tabCount.setTextColor(c)
         (tabCount.background.mutate() as? GradientDrawable)?.setStroke(dp(2), c)
-        tintTree(menuItems, c)
+        if (!glassFormOpen) tintTree(menuItems, c)
+        updateDockPill()
     }
 
     /**
@@ -643,6 +754,11 @@ class MainActivity : AppCompatActivity() {
      * világosra vagy sötétre válthassanak. A WebView-hoz nem nyúl, így a görgetést nem zavarja.
      */
     private fun sampleLuminance() {
+        if (docked && lensActive) {
+            // rögzített sávnál az oldal nem fut a sáv alá: a sáv mögött a háttérszín van
+            applyContentColor(!night)
+            return
+        }
         if (!lensActive || probeBusy || capturing || barRow.width <= 0) return
         val left = barRow.left.coerceAtLeast(0)
         val right = barRow.right.coerceAtMost(root.width)
@@ -733,7 +849,7 @@ class MainActivity : AppCompatActivity() {
         val p = (dist / trigger).coerceIn(0f, 1.4f)
         pullIndicator.animate().cancel()
         pullIcon.animate().cancel()
-        pullIndicator.translationY = statusTop + d * 4f + dist.coerceAtMost(trigger * 1.3f) - dp(44)
+        pullIndicator.translationY = webTop().coerceAtLeast(statusTop) + d * 4f + dist.coerceAtMost(trigger * 1.3f) - dp(44)
         pullIndicator.alpha = (p * 1.4f).coerceIn(0f, 1f)
         val s = 0.6f + 0.4f * p.coerceAtMost(1f)
         pullIndicator.scaleX = s
@@ -895,6 +1011,9 @@ class MainActivity : AppCompatActivity() {
         wv.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
         val tab = Tab(wv)
         applyWebSettings(wv)
+        // A kezdőlapon a hosszú nyomás csak a csempe szerkesztőjét nyitja meg: a WebView saját
+        // reakciója (a link "kiemelése", húzása, szövegkijelölés) itt ki van kapcsolva.
+        wv.setOnLongClickListener { Urls.isStart(wv.url.orEmpty()) }
         wv.onInsetChanged = { if (tab === activeTab) updateLens() }
         wv.onPull = { dist -> if (tab === activeTab) showPull(dist) }
         wv.onPullRelease = { dist ->
@@ -1347,7 +1466,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Eddig tart a pillanatkép: a keresősáv teteje fölött egy kevéssel. */
-    private fun snapshotBottom(): Int = (barRow.top - dp(6)).coerceAtLeast(1)
+    private fun snapshotBottom(): Int {
+        if (docked) return (activeWebView?.bottom ?: scene.height).coerceAtLeast(1)
+        return (barRow.top - dp(6)).coerceAtLeast(1)
+    }
 
     /** A többi lap nagy képét kisebbre cseréljük, hogy sok lapnál se fogyjon el a memória. */
     private fun shrinkOtherThumbnails(keep: Tab) {
@@ -2057,7 +2179,7 @@ class MainActivity : AppCompatActivity() {
      * benne az oldal nevével. Felfelé görgetve (vagy a kapszulára koppintva) visszaáll.
      */
     private fun setCollapsed(value: Boolean) {
-        if (value && (urlField.hasFocus() || overviewShown || overviewBusy || menuVisible)) return
+        if (value && (docked || urlField.hasFocus() || overviewShown || overviewBusy || menuVisible)) return
         if (collapsed == value) return
         collapsed = value
         val duration = 260L
@@ -2486,6 +2608,8 @@ class MainActivity : AppCompatActivity() {
         releaseFocus()
         setCollapsed(false)
         glassFormOpen = false
+        menuItems.scaleX = 1f
+        menuItems.scaleY = 1f
         menuItems.setPadding(0, dp(8), 0, dp(8))
         menuItems.layoutParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2529,10 +2653,17 @@ class MainActivity : AppCompatActivity() {
         // a panel a középső kapszula bal széle fölé kerül (ott van a menügomb)
         visualRect(barCenter, tmpRect)
         val lp = menuPanel.layoutParams as FrameLayout.LayoutParams
-        lp.gravity = Gravity.BOTTOM or Gravity.LEFT
-        lp.topMargin = 0
         lp.leftMargin = tmpRect.left.toInt().coerceAtLeast(0)
-        lp.bottomMargin = (root.height - tmpRect.top).toInt().coerceAtLeast(0) + dp(8)
+        if (dockTop) {
+            // felül rögzített sávnál a menü lefelé nyílik
+            lp.gravity = Gravity.TOP or Gravity.LEFT
+            lp.topMargin = tmpRect.bottom.toInt() + dp(8)
+            lp.bottomMargin = 0
+        } else {
+            lp.gravity = Gravity.BOTTOM or Gravity.LEFT
+            lp.topMargin = 0
+            lp.bottomMargin = (root.height - tmpRect.top).toInt().coerceAtLeast(0) + dp(8)
+        }
         menuPanel.layoutParams = lp
 
         menuAnim?.cancel()
@@ -2573,13 +2704,28 @@ class MainActivity : AppCompatActivity() {
         menuPanel.scaleX = 1f
         menuPanel.scaleY = 1f
         val c = f.coerceIn(0f, 1f)
-        // az üveg űrlapnál az üveg is be- / kihalványul (a csempe helyén nem marad üres folt)
-        menuGlassAlpha = if (glassFormOpen) {
-            val g = (c / 0.35f).coerceIn(0f, 1f)
-            g * g * (3f - 2f * g)
-        } else {
-            1f
+        fun smooth(x: Float): Float {
+            val t = x.coerceIn(0f, 1f)
+            return t * t * (3f - 2f * t)
         }
+        if (glassFormOpen) {
+            // Üveg űrlap: a tartalom a csempe felé zsugorodik / onnan nő ki. Záráskor a szöveg már
+            // az út elején eltűnik, az üveg pedig a csempéhez érve teljesen elhalványul, így nem
+            // marad szellemkép és üres folt sem.
+            menuGlassAlpha = if (formClosing) smooth(c / 0.55f) else smooth(c / 0.3f)
+            val a = if (formClosing) smooth((c - 0.5f) / 0.5f) else smooth((c - 0.3f) / 0.55f)
+            val sc = 0.55f + 0.45f * smooth(c)
+            menuItems.scaleX = sc
+            menuItems.scaleY = sc
+            for (i in 0 until menuItems.childCount) {
+                val row = menuItems.getChildAt(i)
+                row.alpha = a
+                row.translationY = 0f
+            }
+            updateLens()
+            return
+        }
+        menuGlassAlpha = 1f
         // a tartalom egyben, simán úszik be (nem soronként, ami darabosnak hat)
         val a = ((c - 0.2f) / 0.6f).coerceIn(0f, 1f)
         val eased = a * a * (3f - 2f * a)
@@ -2600,7 +2746,11 @@ class MainActivity : AppCompatActivity() {
         menuItems.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         if (form) {
             releaseFocus()
+            formClosing = true
             morphForm(opening = false) {
+                formClosing = false
+                menuItems.scaleX = 1f
+                menuItems.scaleY = 1f
                 menuPanel.visibility = View.GONE
                 menuItems.setLayerType(View.LAYER_TYPE_NONE, null)
                 glassFormOpen = false
@@ -2633,13 +2783,31 @@ class MainActivity : AppCompatActivity() {
 
     /** Az alsó betét (navigációs sáv vagy billentyűzet) fölé igazítja a keresősávot. */
     private fun applyBottomInset(bottom: Int) {
+        lastBottom = bottom
         val barHeight = barRow.layoutParams.height
         // a kereső felület listája a sáv (és a billentyűzet) fölött ér véget
-        searchColumn.setPadding(0, statusTop, 0, bottom + dp(10) + barHeight + dp(8))
+        if (dockTop) {
+            searchColumn.setPadding(0, statusTop + dockHeight(), 0, bottom + dp(8))
+        } else {
+            searchColumn.setPadding(0, statusTop, 0, bottom + dp(10) + barHeight + dp(8))
+        }
         val barLp = barRow.layoutParams as FrameLayout.LayoutParams
-        if (barLp.bottomMargin == bottom + dp(10)) return
-        barLp.bottomMargin = bottom + dp(10)
+        val dockLp = dockBg.layoutParams as FrameLayout.LayoutParams
+        if (dockTop) {
+            // felül: a sáv az állapotsor alatt, a háttere az állapotsor mögé is felér
+            barLp.topMargin = statusTop + dp(4)
+            barLp.bottomMargin = 0
+            dockLp.gravity = Gravity.TOP
+            dockLp.height = statusTop + dockHeight()
+        } else {
+            barLp.topMargin = 0
+            barLp.bottomMargin = bottom + if (docked) dp(4) else dp(10)
+            // alul: a háttér a navigációs sáv (vagy a billentyűzet) mögé is leér
+            dockLp.gravity = Gravity.BOTTOM
+            dockLp.height = bottom + dockHeight()
+        }
         barRow.layoutParams = barLp
+        dockBg.layoutParams = dockLp
     }
 
     private fun setupInsets() {
@@ -2658,14 +2826,10 @@ class MainActivity : AppCompatActivity() {
                 if (radius > 0) screenRadius = radius.toFloat()
             }
 
-            tabs.forEach { applyWebTop(it.webView) }
-            (progress.layoutParams as FrameLayout.LayoutParams).topMargin = status.top
-            val barHeight = barRow.layoutParams.height
-            tabList.setPadding(dp(9), status.top + dp(10), dp(9), bars + barHeight + dp(30))
+            navBottom = bars
             // amíg a billentyűzet mozog, a sáv helyét az animáció adja (lásd lent)
-            if (!imeAnimating) applyBottomInset(bottom)
-            root.requestLayout()
-            updateLens()
+            if (!imeAnimating) lastBottom = bottom
+            applyLayoutInsets()
             WindowInsetsCompat.CONSUMED
         }
 
@@ -2848,6 +3012,7 @@ class MainActivity : AppCompatActivity() {
         releaseFocus()
         setCollapsed(false)
         glassFormOpen = true
+        formClosing = false
         menuItems.removeAllViews()
         menuItems.setPadding(0, 0, 0, 0)
 
@@ -2859,7 +3024,11 @@ class MainActivity : AppCompatActivity() {
         // enyhe dér az üvegen, hogy a szöveg bármilyen oldal fölött olvasható legyen
         box.background = GradientDrawable().apply {
             cornerRadius = dp(26).toFloat()
-            setColor(if (night) Color.argb(70, 20, 22, 28) else Color.argb(90, 255, 255, 255))
+            val a = if (lensActive) 1f else 2.6f
+            setColor(
+                if (night) Color.argb((70 * a).toInt(), 20, 22, 28)
+                else Color.argb((90 * a).toInt().coerceAtMost(255), 255, 255, 255)
+            )
         }
 
         val tv = TextView(this)
@@ -2949,10 +3118,10 @@ class MainActivity : AppCompatActivity() {
         if (a != null) {
             left = (a.centerX() - w / 2f).toInt().coerceIn(dp(20), maxOf(dp(20), root.width - dp(20) - w))
             val above = (a.top - dp(14) - h).toInt()
-            top = if (above >= statusTop + dp(8)) above else (a.bottom + dp(14)).toInt()
+            top = if (above >= maxOf(statusTop, webTop()) + dp(8)) above else (a.bottom + dp(14)).toInt()
         } else {
             left = (root.width - w) / 2
-            top = statusTop + dp(64)
+            top = maxOf(statusTop, webTop()) + dp(64)
         }
         formTarget.set(left.toFloat(), top.toFloat(), (left + w).toFloat(), (top + h).toFloat())
 
@@ -3017,12 +3186,15 @@ class MainActivity : AppCompatActivity() {
         to.offset(-loc[0].toFloat(), -loc[1].toFloat())
         val fromR = minOf(from.width(), from.height()) / 2f
         val toR = dp(26).toFloat()
+        // a tartalom a csempe közepe felé zsugorodik / onnan nő ki
+        menuItems.pivotX = from.centerX() + loc[0] - formTarget.left
+        menuItems.pivotY = from.centerY() + loc[1] - formTarget.top
         val anim = if (opening) ValueAnimator.ofFloat(0f, 1f) else ValueAnimator.ofFloat(1f, 0f)
-        anim.duration = if (opening) 520L else 420L
+        anim.duration = if (opening) 520L else 460L
         anim.interpolator = if (opening) {
             android.view.animation.PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
         } else {
-            android.view.animation.PathInterpolator(0.3f, 0f, 0.1f, 1f)
+            android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f)
         }
         anim.addUpdateListener {
             val f = it.animatedValue as Float

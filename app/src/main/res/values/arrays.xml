@@ -19,11 +19,24 @@
         <item>Folyékony üveg (fénytörés)</item>
         <item>Matt üveg (erős elmosás, fénytörés nélkül)</item>
         <item>Egyszerű üveg (áttetsző, mosás nélkül)</item>
+        <item>Kikapcsolva (tömör felületek, üveg nélkül)</item>
     </string-array>
     <string-array name="glass_mode_values">
         <item>liquid</item>
         <item>frost</item>
         <item>simple</item>
+        <item>off</item>
+    </string-array>
+
+    <string-array name="bar_style_names">
+        <item>Lebegő (liquid glass kapszulák)</item>
+        <item>Rögzített, alul (Chrome-szerű)</item>
+        <item>Rögzített, felül (Chrome-szerű)</item>
+    </string-array>
+    <string-array name="bar_style_values">
+        <item>floating</item>
+        <item>bottom</item>
+        <item>top</item>
     </string-array>
 
     <string-array name="app_theme_names">

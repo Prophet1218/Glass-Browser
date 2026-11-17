@@ -72,7 +72,7 @@
     font-weight: 700; font-size: 20px; color: #fff;
     transition: transform .15s;
   }
-  .tile { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .tile, .tile * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
   .tile:active .ic { transform: scale(.92); }
   .tile .ic { transition: transform .25s cubic-bezier(.2, .9, .3, 1.4), box-shadow .25s; }
   .tile.lift .ic { transform: scale(1.12); box-shadow: 0 8px 22px rgba(0, 0, 0, .22); }
@@ -164,6 +164,7 @@
     a.addEventListener("touchend", function () { if (timer) cancel(); });
     a.addEventListener("touchcancel", cancel);
     a.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    a.addEventListener("dragstart", function (e) { e.preventDefault(); });
     a.addEventListener("click", function (e) { if (fired) { e.preventDefault(); fired = false; } });
   }
 
@@ -171,14 +172,14 @@
     var box = document.getElementById("tiles");
     box.innerHTML = "";
     list.slice(0, 8).forEach(function (t, i) {
-      var a = el("a", "tile"); a.href = t.url;
+      var a = el("a", "tile"); a.href = t.url; a.draggable = false;
       longPress(a, i);
       var ic = el("div", "ic");
       var name = t.title || host(t.url);
       // betű a színes körben; ha betölt a webhely ikonja, azt mutatjuk
       ic.textContent = name.charAt(0).toUpperCase();
       ic.style.background = COLORS[i % COLORS.length];
-      var img = new Image();
+      var img = new Image(); img.draggable = false;
       img.onload = function () {
         if (img.naturalWidth > 8) { ic.textContent = ""; ic.style.background = ""; ic.appendChild(img); }
       };

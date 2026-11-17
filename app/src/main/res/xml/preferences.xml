@@ -118,6 +118,15 @@
         app:iconSpaceReserved="false">
 
         <ListPreference
+            android:defaultValue="floating"
+            android:entries="@array/bar_style_names"
+            android:entryValues="@array/bar_style_values"
+            android:key="bar_style"
+            android:title="Keresősáv stílusa"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
             android:defaultValue="liquid"
             android:entries="@array/glass_mode_names"
             android:entryValues="@array/glass_mode_values"

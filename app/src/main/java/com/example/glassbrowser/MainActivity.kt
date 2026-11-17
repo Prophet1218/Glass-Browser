@@ -971,8 +971,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             } else {
                 l.clearSlot(SLOT_SUGGEST)
             }
-            // "Vágólapra másolva" kapszula
-            val ct = copyToast
+            // "Vágólapra másolva" kapszula (vagy a kereső sorainak hosszú nyomásra megjelenő kapszulája)
+            val ct = (rowActions ?: rowActionsFading)?.takeIf { it.visibility == View.VISIBLE && it.alpha > 0.02f } ?: copyToast
             if (ct != null && ct.visibility == View.VISIBLE && ct.alpha > 0.02f && ct.width > 0 &&
                 pullIndicator.alpha <= 0.02f
             ) {
@@ -3762,6 +3762,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         handler.removeCallbacks(suggestRunnable)
         if (!searchShown) return
         searchShown = false
+        hideRowActions(immediate = true)
+        searchList.animate().cancel()
+        searchList.translationX = 0f
+        searchList.alpha = 1f
         searchOverlayOut()
         searchColumn.animate().cancel()
         searchColumn.animate().translationY(dp(18).toFloat()).setDuration(200).start()
@@ -4077,11 +4081,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                         }
                     }
                     val url = item.url
-                    if (searchTab == 1 && url != null) {
+                    if (url != null && !searchSwiping) {
                         r.setOnLongClickListener {
-                            BookmarkStore.remove(applicationContext, url)
-                            Toast.makeText(this, L.t("Könyvjelző törölve"), Toast.LENGTH_SHORT).show()
-                            renderSearch()
+                            showRowActions(r, item)
                             true
                         }
                     } else {
@@ -4091,7 +4093,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 }
             }
 
-            if (searchKeys.getOrNull(i) != key && animated < 14) {
+            if (!searchNoAnim && searchKeys.getOrNull(i) != key && animated < 14) {
                 row.animate().cancel()
                 row.alpha = 0f
                 row.translationY = dp(14).toFloat()
@@ -4262,6 +4264,256 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private var copyToast: TextView? = null
 
+    // ------------------------------------------------ kereső felület: hosszú nyomás, oldalra húzás
+
+    /** Hosszú nyomásra a sor fölött megjelenő üvegkapszula (Másolás / Törlés). */
+    private var rowActions: LinearLayout? = null
+    private var rowCatcher: View? = null
+    private var rowActionRow: View? = null
+
+    private fun showRowActions(row: View, item: SuggestItem) {
+        val url = item.url ?: return
+        haptic()
+        hideRowActions(immediate = true)
+        val col = menuTextColor()
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(dp(6), 0, dp(6), 0)
+        bar.background = glassBubble(dp(100).toFloat())
+        fun action(icon: Int, label: String, tint: Int, onTap: () -> Unit): TextView {
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 14.5f
+            t.setTypeface(t.typeface, android.graphics.Typeface.BOLD)
+            t.setTextColor(tint)
+            t.gravity = Gravity.CENTER
+            t.setPadding(dp(14), 0, dp(14), 0)
+            t.compoundDrawablePadding = dp(8)
+            val ic = ContextCompat.getDrawable(this, icon)?.mutate()
+            ic?.setBounds(0, 0, dp(18), dp(18))
+            t.setCompoundDrawablesRelative(ic, null, null, null)
+            t.compoundDrawableTintList = ColorStateList.valueOf(tint)
+            t.setOnClickListener { onTap() }
+            t.setOnTouchListener { v, ev ->
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(120).start()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(OvershootInterpolator(3f)).start()
+                }
+                false
+            }
+            bar.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            return t
+        }
+        action(R.drawable.ic_m_copy, L.t("Másolás"), col) {
+            val cm = getSystemService(android.content.ClipboardManager::class.java)
+            cm?.setPrimaryClip(android.content.ClipData.newPlainText("URL", url))
+            hideRowActions()
+            showCopyToast()
+        }
+        // nyitott lapot nem törlünk innen (ott a lapváltó a helye)
+        if (item.tab == null) {
+            val sep = View(this)
+            sep.setBackgroundColor(ColorUtils.setAlphaComponent(col, 50))
+            bar.addView(sep, LinearLayout.LayoutParams(dp(1), dp(22)))
+            action(R.drawable.ic_m_delete, L.t("Törlés"), 0xFFFF453A.toInt()) {
+                hideRowActions()
+                deleteSearchRow(row, item, url)
+            }
+        }
+        // a képernyő többi részére koppintva eltűnik
+        val catcher = View(this)
+        catcher.setOnTouchListener { _, ev ->
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) hideRowActions()
+            true
+        }
+        root.addView(catcher, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48))
+        lp.gravity = Gravity.TOP or Gravity.START
+        root.addView(bar, lp)
+        bar.measure(
+            View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(dp(48), View.MeasureSpec.EXACTLY)
+        )
+        val loc = IntArray(2)
+        val rloc = IntArray(2)
+        row.getLocationInWindow(loc)
+        root.getLocationInWindow(rloc)
+        val rowTop = loc[1] - rloc[1]
+        val w = bar.measuredWidth
+        var y = rowTop - dp(48) - dp(6)
+        // a fülek sávja alá ne csússzon: ilyenkor a sor alá kerül
+        val minY = (segBar.top + segBar.translationY + segBar.height).toInt() + dp(4)
+        val below = y < minY
+        if (below) y = rowTop + row.height + dp(6)
+        bar.translationX = ((root.width - w) / 2f)
+        bar.translationY = y.toFloat()
+        bar.pivotX = w / 2f
+        bar.pivotY = if (below) 0f else dp(48).toFloat()
+        bar.alpha = 0f
+        bar.scaleX = 0.6f
+        bar.scaleY = 0.6f
+        bar.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(380)
+            .setInterpolator(OvershootInterpolator(2f))
+            .setUpdateListener { updateLens() }.start()
+        // a megnyomott sor kicsit „felemelkedik”
+        row.animate().cancel()
+        row.animate().scaleX(0.97f).scaleY(0.97f).setDuration(200).setInterpolator(DecelerateInterpolator()).start()
+        rowActions = bar
+        rowCatcher = catcher
+        rowActionRow = row
+        updateLens()
+    }
+
+    private fun hideRowActions(immediate: Boolean = false) {
+        val bar = rowActions ?: return
+        rowActions = null
+        rowCatcher?.let { root.removeView(it) }
+        rowCatcher = null
+        rowActionRow?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(260)?.setInterpolator(OvershootInterpolator(2f))?.start()
+        rowActionRow = null
+        bar.animate().cancel()
+        if (immediate) {
+            root.removeView(bar)
+            updateLens()
+            return
+        }
+        // a kapszula a lens rajzolásához még egy darabig a rowActions-ben marad
+        bar.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(200)
+            .setInterpolator(DecelerateInterpolator())
+            .setUpdateListener {
+                rowActionsFading = bar
+                updateLens()
+            }
+            .withEndAction {
+                if (rowActionsFading === bar) rowActionsFading = null
+                root.removeView(bar)
+                updateLens()
+            }.start()
+    }
+
+    private var rowActionsFading: LinearLayout? = null
+
+    /** A sor összecsukódik és eltűnik, a többi felcsúszik a helyére. */
+    private fun deleteSearchRow(row: View, item: SuggestItem, url: String) {
+        haptic()
+        when {
+            searchTab == 1 || item.icon == R.drawable.ic_bookmark -> {
+                BookmarkStore.remove(applicationContext, url)
+                if (searchTab != 1) HistoryStore.remove(applicationContext, url)
+            }
+            else -> HistoryStore.remove(applicationContext, url)
+        }
+        val h = row.height
+        row.animate().cancel()
+        row.animate().alpha(0f).translationX(-dp(40).toFloat()).setDuration(180)
+            .setInterpolator(DecelerateInterpolator()).withEndAction {
+                val anim = ValueAnimator.ofInt(h, 0)
+                anim.duration = 220
+                anim.interpolator = DecelerateInterpolator(1.6f)
+                anim.addUpdateListener {
+                    val lp = row.layoutParams
+                    lp.height = it.animatedValue as Int
+                    row.layoutParams = lp
+                }
+                anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        searchList.removeView(row)
+                        // a maradék sorok már a helyükön vannak: ne ússzanak be újra
+                        renderSearchQuiet()
+                    }
+                })
+                anim.start()
+            }.start()
+    }
+
+    /** Újrarajzolás beúszó animáció nélkül (törlés után). */
+    private fun renderSearchQuiet() {
+        searchList.removeAllViews()
+        searchKeys = emptyList()
+        searchNoAnim = true
+        renderSearch()
+        searchNoAnim = false
+    }
+
+    private var searchNoAnim = false
+
+    /** Oldalra húzás a kereső felületen: fülváltás (Találatok / Könyvjelzők / Előzmények). */
+    private var searchSwiping = false
+    private var swipeDownX = 0f
+    private var swipeDownY = 0f
+    private var swipeTracking = false
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (searchShown && rowActions == null && searchPage.visibility == View.VISIBLE && searchPage.alpha > 0.9f) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val scroll = findViewById<View>(R.id.searchScroll)
+                    val loc = IntArray(2)
+                    scroll.getLocationOnScreen(loc)
+                    swipeTracking = ev.rawY >= loc[1] && ev.rawY <= loc[1] + scroll.height
+                    swipeDownX = ev.rawX
+                    swipeDownY = ev.rawY
+                    searchSwiping = false
+                }
+                MotionEvent.ACTION_MOVE -> if (swipeTracking) {
+                    val dx = ev.rawX - swipeDownX
+                    val dy = ev.rawY - swipeDownY
+                    if (!searchSwiping) {
+                        if (kotlin.math.abs(dx) > dp(18) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.6f) {
+                            searchSwiping = true
+                            // a sorok ne kapják meg a koppintást / hosszú nyomást
+                            val cancel = MotionEvent.obtain(ev)
+                            cancel.action = MotionEvent.ACTION_CANCEL
+                            super.dispatchTouchEvent(cancel)
+                            cancel.recycle()
+                        } else if (kotlin.math.abs(dy) > dp(18)) {
+                            swipeTracking = false
+                        }
+                    }
+                    if (searchSwiping) {
+                        // a lista követi az ujjat; a szélső fülön túl gumiszerűen ellenáll
+                        val edge = (searchTab == 0 && dx > 0) || (searchTab == 2 && dx < 0)
+                        val follow = if (edge) dx * 0.18f else dx * 0.45f
+                        searchList.translationX = follow
+                        searchList.alpha = 1f - (kotlin.math.abs(follow) / (root.width * 0.9f)).coerceIn(0f, 0.6f)
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (searchSwiping) {
+                    val dx = ev.rawX - swipeDownX
+                    searchSwiping = false
+                    swipeTracking = false
+                    val next = when {
+                        dx < -dp(64) && searchTab < 2 -> searchTab + 1
+                        dx > dp(64) && searchTab > 0 -> searchTab - 1
+                        else -> searchTab
+                    }
+                    if (next != searchTab && ev.actionMasked == MotionEvent.ACTION_UP) {
+                        haptic()
+                        val dir = if (next > searchTab) 1f else -1f
+                        searchList.animate().cancel()
+                        searchList.animate().translationX(-dir * dp(60)).alpha(0f).setDuration(110)
+                            .setInterpolator(DecelerateInterpolator())
+                            .withEndAction {
+                                selectSearchTab(next, animate = true)
+                                searchList.translationX = dir * dp(60)
+                                searchList.animate().translationX(0f).alpha(1f).setDuration(320)
+                                    .setInterpolator(DecelerateInterpolator(2f)).start()
+                            }.start()
+                    } else {
+                        searchList.animate().cancel()
+                        searchList.animate().translationX(0f).alpha(1f).setDuration(360)
+                            .setInterpolator(OvershootInterpolator(1.6f)).start()
+                    }
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     /** Kis üvegkapszula a sáv fölött: "Vágólapra másolva", rugózva jelenik meg és tűnik el. */
     private fun showCopyToast(message: String = L.t("Vágólapra másolva")) {
         val tv = copyToast ?: TextView(this).also { t ->
@@ -4372,9 +4624,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private var trClose: ImageButton? = null
 
+    private var trMorph: ValueAnimator? = null
+
     /** [state]: 0 = ajánlat, 1 = fordít, 2 = kész, 3 = hiba. */
     private fun showTranslateBar(tab: Tab, state: Int) {
         val bar = ensureTranslateBar()
+        // a kapszula a régi méretéről nő / húzódik az újra (ha már látszik)
+        val morphFrom = if (bar.visibility == View.VISIBLE && !trScrolledAway && bar.width > 0 && trState != state) bar.width else -1
         trTab = tab
         trState = state
         trWanted = true
@@ -4402,11 +4658,81 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         val lp = bar.layoutParams as FrameLayout.LayoutParams
         lp.topMargin = (if (dockTop) statusTop + dockHeight() else statusTop) + dp(8)
+        if (morphFrom > 0) {
+            morphTranslateBar(bar, morphFrom)
+        } else {
+            trMorph?.cancel()
+            lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
+        }
         bar.layoutParams = lp
         if (bar.visibility != View.VISIBLE || trScrolledAway) {
             trScrolledAway = false
             popTranslateBar(true)
         }
+    }
+
+    /**
+     * A fordító kapszula tartalma megváltozott (pl. „Fordítás…” -> „Angol → Magyar  Eredeti”):
+     * a kapszula rugózva nyúlik az új méretre, a tartalom közben finoman beúszik, a szélek alatt
+     * az üveg végig követi.
+     */
+    private fun morphTranslateBar(bar: LinearLayout, fromW: Int) {
+        trMorph?.cancel()
+        bar.measure(
+            View.MeasureSpec.makeMeasureSpec(root.width - dp(24), View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(dp(42), View.MeasureSpec.EXACTLY)
+        )
+        val toW = bar.measuredWidth
+        if (toW <= 0 || kotlin.math.abs(toW - fromW) < 2) {
+            (bar.layoutParams as FrameLayout.LayoutParams).width = ViewGroup.LayoutParams.WRAP_CONTENT
+            return
+        }
+        val lp = bar.layoutParams as FrameLayout.LayoutParams
+        lp.width = fromW
+        // a tartalom (szöveg, gomb) késleltetve, oldalról úszik be
+        for (i in 1 until bar.childCount) {
+            val c = bar.getChildAt(i)
+            if (c.visibility != View.VISIBLE) continue
+            c.animate().cancel()
+            c.alpha = 0f
+            c.translationX = if (toW > fromW) -dp(10).toFloat() else dp(6).toFloat()
+            c.animate().alpha(1f).translationX(0f).setStartDelay(90L + 40L * i).setDuration(300L)
+                .setInterpolator(DecelerateInterpolator(1.8f)).start()
+        }
+        bar.getChildAt(0)?.let { ic ->
+            ic.animate().cancel()
+            ic.rotation = -30f
+            ic.animate().rotation(0f).setDuration(520L).setInterpolator(OvershootInterpolator(2.2f)).start()
+        }
+        val anim = ValueAnimator.ofFloat(0f, 1f)
+        anim.duration = 520L
+        anim.interpolator = OvershootInterpolator(1.15f)
+        anim.addUpdateListener {
+            val t = it.animatedValue as Float
+            val w = (fromW + (toW - fromW) * t).toInt().coerceAtLeast(dp(42))
+            val l = bar.layoutParams as FrameLayout.LayoutParams
+            if (l.width != w) {
+                l.width = w
+                bar.layoutParams = l
+            }
+            // nyúlás közben kicsit lapul (mint egy folyadékcsepp)
+            val g = kotlin.math.sin(Math.PI * it.animatedFraction).toFloat()
+            bar.scaleY = 1f - 0.05f * g
+            updateLens()
+        }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                if (trMorph !== anim) return
+                trMorph = null
+                bar.scaleY = 1f
+                val l = bar.layoutParams as FrameLayout.LayoutParams
+                l.width = ViewGroup.LayoutParams.WRAP_CONTENT
+                bar.layoutParams = l
+                updateLens()
+            }
+        })
+        trMorph = anim
+        anim.start()
     }
 
     /** Megjelenés / eltűnés: felülről rugózva úszik be, és felfelé úszik ki. */

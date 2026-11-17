@@ -110,6 +110,7 @@ object L {
         "Mentés" to "Save",
         "Mégse" to "Cancel",
         "Törlés" to "Delete",
+        "Másolás" to "Copy",
         "Visszaállítás" to "Reset",
         "Igen" to "Yes",
         // beállítások: kategóriák és elemek

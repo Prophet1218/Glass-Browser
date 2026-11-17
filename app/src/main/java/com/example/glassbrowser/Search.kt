@@ -118,6 +118,13 @@ object HistoryStore {
         }
     }
 
+    fun remove(context: Context, url: String) {
+        if (items.removeAll { it.url == url }) {
+            dirty = true
+            save(context)
+        }
+    }
+
     fun clear(context: Context) {
         items.clear()
         dirty = false

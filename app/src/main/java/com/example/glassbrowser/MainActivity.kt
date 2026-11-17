@@ -2529,7 +2529,7 @@ class MainActivity : AppCompatActivity() {
         // A fülek sávja a tartalom fölé kerül (a képernyő gyökerébe): a lista alatta görgethető, és
         // a mögötte lévő szöveget az üveg elmossa (az üveg így nem mossa el magát a sávot).
         searchColumn.removeView(segBar)
-        searchScroll.clipToPadding = false
+        findViewById<android.widget.ScrollView>(R.id.searchScroll).clipToPadding = false
         val shade = View(this)
         shade.visibility = View.GONE
         searchShade = shade

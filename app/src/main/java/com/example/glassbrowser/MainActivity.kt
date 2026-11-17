@@ -342,8 +342,36 @@ class MainActivity : AppCompatActivity() {
         for (v in listOf<FrameLayout>(barLeft, barCenter, barRight)) {
             val glow = GlowDrawable(resources.displayMetrics.density)
             v.foreground = glow
+            var downX = 0f
+            var downY = 0f
+            var held = false
             (v as? PressLayout)?.onTouchMove = { x, y, down ->
-                glow.track(x, y, down, if (glassDark() || glassClear()) Color.WHITE else Color.WHITE)
+                glow.track(x, y, down, Color.WHITE)
+                if (down && !held) {
+                    held = true
+                    downX = x
+                    downY = y
+                } else if (!down) {
+                    held = false
+                } else if (!collapsed && v.width > 0 && v.height > 0) {
+                    // a kapszula az ujj felé nyúlik (gumiszerűen, egyre nehezebben)
+                    val dx = x - downX
+                    val dy = y - downY
+                    if (kotlin.math.abs(dx) > dp(3) || kotlin.math.abs(dy) > dp(3)) {
+                        fun rubber(t: Float) = t / (1f + kotlin.math.abs(t))
+                        val ax = rubber(dx / v.width * 2f)
+                        val ay = rubber(dy / v.height)
+                        val base = if (bounceOn) 1f - (0.04f + 0.16f * bounceStrength) * 0.5f else 1f
+                        v.animate().cancel()
+                        v.pivotX = v.width / 2f
+                        v.pivotY = v.height / 2f
+                        v.scaleX = base * (1f + 0.12f * kotlin.math.abs(ax))
+                        v.scaleY = base * (1f + 0.10f * kotlin.math.abs(ay) - 0.04f * kotlin.math.abs(ax))
+                        v.translationX = ax * dp(10)
+                        v.translationY = ay * dp(6)
+                        updateLens()
+                    }
+                }
             }
         }
     }
@@ -729,7 +757,9 @@ class MainActivity : AppCompatActivity() {
             val vis = topVis
             // (a térköz kitöltése akkor is él, ha az elmosás épp ki van halványítva: különben a lapváltó
             // bezárása után egy pillanatra szürke sáv villanna az állapotsor mögött)
-            l.setPadColor(activeTab?.padColor ?: 0)
+            // rögzített fejlécnél élőben a fejléc felső sora nyúlik fel (görgetéskor is pontos)
+            l.setPadColor(if (activeTab?.fixedHeader == true) 0 else activeTab?.padColor ?: 0)
+            syncStatusIcons()
             val searchVis = if (searchPage.visibility == View.VISIBLE) searchPage.alpha else 0f
             // lapváltó: csak görgetés közben kapcsol be, a görgetéssel együtt erősödik
             val ovScroll = (tabList.computeVerticalScrollOffset() / (48f * d)).coerceIn(0f, 1f)
@@ -749,7 +779,9 @@ class MainActivity : AppCompatActivity() {
                 else Color.argb((110 * searchVis).toInt(), 243, 244, 248)
                 l.setFlow(0f, 0f, 0f, 0)
                 l.setTop(bandH, 22f * d, 16f * d * searchVis, tint, 0f, true, hardEdge = true)
-            } else if (topBlurOn && statusTop > 0 && !searchShown && (vis > 0.01f || (flowLayout() && !overviewShown))) {
+            } else if (topBlurOn && statusTop > 0 && !searchShown && contentContainer.scaleX > 0.999f &&
+                (vis > 0.01f || (flowLayout() && !overviewShown))
+            ) {
                 // 0 erősségnél se elmosás, se árnyalat: az oldal tisztán látszik az állapotsor mögött
                 val k = (topStrength / (6f * d)).coerceIn(0f, 1f) * vis
                 val tint = if (night) Color.argb((96 * k).toInt(), 0, 0, 0) else Color.argb((80 * k).toInt(), 255, 255, 255)
@@ -1010,7 +1042,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Az állapotsor ikonjai a világos / sötét módot követik. */
+    private var statusLightCache: Boolean? = null
+
+    /**
+     * Az állapotsor ikonjai: ha az oldal teteje (a térköz kitöltése) világos, sötét ikonok, ha
+     * sötét, világosak. Egyébként a világos / sötét mód szerint.
+     */
+    private fun syncStatusIcons() {
+        val tab = activeTab
+        val pc = tab?.padColor ?: 0
+        val atTop = (tab?.webView?.scrollY ?: 1) < statusTop
+        val light = if (flowLayout() && pc != 0 && tab?.fixedHeader != true && atTop &&
+            !overviewShown && !searchShown && contentContainer.scaleX > 0.999f
+        ) {
+            ColorUtils.calculateLuminance(pc) > 0.5
+        } else {
+            !night
+        }
+        if (statusLightCache == light) return
+        statusLightCache = light
+        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = light
+    }
+
     private fun applyStatusColor() {
+        statusLightCache = null
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = !night
     }
 
@@ -2432,7 +2487,7 @@ class MainActivity : AppCompatActivity() {
         if (hero.visibility != View.VISIBLE) return
         activeWebView?.let { kickRepaint(it) }
         hero.animate().cancel()
-        hero.animate().alpha(0f).setDuration(180)
+        hero.animate().alpha(0f).setDuration(110)
             .setInterpolator(DecelerateInterpolator())
             .withEndAction {
                 hero.visibility = View.GONE

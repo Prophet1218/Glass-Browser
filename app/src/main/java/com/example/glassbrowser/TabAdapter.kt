@@ -10,7 +10,7 @@ import androidx.recyclerview.widget.RecyclerView
 
 /** A lapváltó rácsának kártyái: fent a lap képe (bezáró gombbal), alatta az ikon és a cím. */
 class TabAdapter(
-    private val tabs: List<Tab>,
+    private val tabsOf: () -> List<Tab>,
     private val activeTab: () -> Tab?,
     /** Az a lap, amelynek kártyáját épp a "repülő" kép helyettesíti (ilyenkor rejtve van). */
     private val hiddenTab: () -> Tab?,
@@ -38,10 +38,10 @@ class TabAdapter(
         return holder
     }
 
-    override fun getItemCount(): Int = tabs.size
+    override fun getItemCount(): Int = tabsOf().size
 
     override fun onBindViewHolder(holder: VH, position: Int) {
-        val tab = tabs[position]
+        val tab = tabsOf()[position]
         val start = Urls.isStart(tab.url)
 
         holder.title.text = tab.title.ifBlank { if (start) L.t("Kezdőlap") else Urls.host(tab.url) }
@@ -71,11 +71,11 @@ class TabAdapter(
 
         holder.card.setOnClickListener {
             val pos = holder.bindingAdapterPosition
-            if (pos != RecyclerView.NO_POSITION) onSelect(tabs[pos])
+            if (pos != RecyclerView.NO_POSITION) onSelect(tabsOf()[pos])
         }
         holder.close.setOnClickListener {
             val pos = holder.bindingAdapterPosition
-            if (pos != RecyclerView.NO_POSITION) onClose(tabs[pos])
+            if (pos != RecyclerView.NO_POSITION) onClose(tabsOf()[pos])
         }
     }
 }

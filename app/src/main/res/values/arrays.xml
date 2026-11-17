@@ -30,11 +30,13 @@
         <item>Rendszer szerint (világos / sötét)</item>
         <item>Világos</item>
         <item>Sötét</item>
+        <item>Átlátszó (a szöveg az oldalhoz igazodik)</item>
     </string-array>
     <string-array name="glass_tone_values">
         <item>system</item>
         <item>light</item>
         <item>dark</item>
+        <item>clear</item>
     </string-array>
 
     <string-array name="language_names">

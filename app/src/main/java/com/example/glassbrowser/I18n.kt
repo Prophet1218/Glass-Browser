@@ -257,6 +257,8 @@ object L {
         "Váltás erre a lapra" to "Switch to tab",
         "Webcím kimásolva" to "Address copied",
         "Vágólapra másolva" to "Copied to clipboard",
+        "Átlátszó (a szöveg az oldalhoz igazodik)" to "Clear (text adapts to the page)",
+        "Privát böngészés" to "Private browsing",
         "Üveg árnyalata" to "Glass tone",
         "Rendszer szerint (világos / sötét)" to "Follow system (light / dark)",
         "Nem sikerült lefordítani" to "Couldn't translate",

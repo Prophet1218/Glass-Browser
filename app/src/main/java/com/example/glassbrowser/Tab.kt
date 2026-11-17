@@ -23,6 +23,10 @@ class Tab(val webView: GlassWebView) {
     var translated: Boolean = false
     /** Fut a fordítás, várjuk a visszajelzést. */
     var trPending: Boolean = false
+    /** Privát lap: külön sütik / tárhely, nem kerül az előzmények közé, nem mentjük. */
+    var isPrivate: Boolean = false
+    /** Az oldal fejlécének színe (az állapotsor mögötti térköz kitöltéséhez); 0 = ismeretlen. */
+    var padColor: Int = 0
 }
 
 object Urls {

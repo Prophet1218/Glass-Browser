@@ -36,6 +36,15 @@ class LensEffect(private val target: View) {
     private var topBlur = 0f
     private var topMode = 0f
     private var contentTop = 0f
+    /** Az állapotsor mögötti térköz egyszínű kitöltése (alfa 0 = az első sor nyújtása). */
+    private val padColor = floatArrayOf(0f, 0f, 0f, 0f)
+
+    fun setPadColor(color: Int) {
+        val a = if (Color.alpha(color) > 200) 1f else 0f
+        if (set(padColor, Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f, a)) {
+            dirty = true
+        }
+    }
     private var dirty = true
     private var attached = false
 
@@ -165,6 +174,7 @@ class LensEffect(private val target: View) {
         shader.setFloatUniform("topMode", topMode)
         shader.setFloatUniform("topTint", topTint)
         shader.setFloatUniform("contentTop", contentTop)
+        shader.setFloatUniform("padColor", padColor)
         shader.setFloatUniform("rimColor", rim)
         shader.setFloatUniform("rimWidth", rimWidth)
         val main = RenderEffect.createRuntimeShaderEffect(shader, "content")
@@ -257,6 +267,7 @@ uniform float topBlur;
 uniform float topMode;
 uniform vec4 topTint;
 uniform float contentTop;
+uniform vec4 padColor;
 uniform vec4 rimColor;
 uniform float rimWidth;
 
@@ -270,6 +281,9 @@ float sdRect(vec2 c, vec4 rect, float r) {
 }
 
 vec4 tap(vec2 p) {
+    // a térköz az oldal fejlécének színével töltődik ki (ikonok nélkül); ha az nem ismert,
+    // az első sor nyúlik fel
+    if (p.y < contentTop && padColor.a > 0.5) return vec4(padColor.rgb, 1.0);
     return vec4(content.eval(vec2(p.x, max(p.y, contentTop + 0.5))));
 }
 

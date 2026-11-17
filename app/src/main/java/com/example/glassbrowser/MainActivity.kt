@@ -162,7 +162,13 @@ class MainActivity : AppCompatActivity() {
     // ---- állapot
     private lateinit var prefs: SharedPreferences
     private lateinit var tabAdapter: TabAdapter
-    private val tabs = mutableListOf<Tab>()
+    /** A normál és a privát lapok külön listában; [tabs] mindig az éppen látható csoport. */
+    private val normalTabs = mutableListOf<Tab>()
+    private val privateTabs = mutableListOf<Tab>()
+    private var tabs = normalTabs
+    private var privateMode = false
+    private var normalActive: Tab? = null
+    private var privateActive: Tab? = null
     private var activeTab: Tab? = null
     private val handler = Handler(Looper.getMainLooper())
     private var statusTop = 0
@@ -302,6 +308,9 @@ class MainActivity : AppCompatActivity() {
         setupOverview()
         setupInsets()
         setupDockMenuButton()
+        setupPrivateButton()
+        // az előző futásból maradt privát adatok törlése
+        handler.postDelayed({ deletePrivateData() }, 1500L)
         L.tree(root)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -425,7 +434,7 @@ class MainActivity : AppCompatActivity() {
         val plateAlpha = 255
         val plate: Int? = when {
             lensActive -> null
-            glassDark() -> Color.argb(plateAlpha, 27, 30, 38)
+            (if (glassClear()) night else glassDark()) -> Color.argb(plateAlpha, 27, 30, 38)
             else -> Color.argb(plateAlpha, 248, 249, 251)
         }
         val rimOn = prefs.getBoolean("glass_rim", true) && mode != "off"
@@ -445,7 +454,7 @@ class MainActivity : AppCompatActivity() {
             it.setRim(rimOn)
             // dér réteg: az üveg a választott árnyalatot kapja (olvasható szöveg minden oldal fölött)
             it.setFrost(
-                if (!lensActive) Color.TRANSPARENT
+                if (!lensActive || glassClear()) Color.TRANSPARENT
                 else if (glassDark()) Color.argb(110, 22, 24, 30) else Color.argb(150, 250, 250, 252)
             )
         }
@@ -454,7 +463,7 @@ class MainActivity : AppCompatActivity() {
         dockSkin.setShade((glassShade * 255f).toInt())
         dockSkin.setRim(false)
         applyBarStyle()
-        applyContentColor(!glassDark())
+        if (!glassClear()) applyContentColor(!glassDark())
 
         tabs.forEach { applyWebTop(it.webView) }
         updateLens()
@@ -695,8 +704,15 @@ class MainActivity : AppCompatActivity() {
             val vis = topVis
             // (a térköz kitöltése akkor is él, ha az elmosás épp ki van halványítva: különben a lapváltó
             // bezárása után egy pillanatra szürke sáv villanna az állapotsor mögött)
+            l.setPadColor(activeTab?.padColor ?: 0)
             val searchVis = if (searchPage.visibility == View.VISIBLE) searchPage.alpha else 0f
-            if (searchVis > 0.01f) {
+            val ovVis = if (overview.visibility == View.VISIBLE && overviewShown) overview.alpha * tabList.alpha else 0f
+            if (searchVis <= 0.01f && ovVis > 0.01f) {
+                // lapváltó: görgetéskor a kártyák az állapotsor alatt elmosódva úsznak ki
+                val tint = Color.argb((70 * ovVis).toInt(), 10, 12, 16)
+                l.setFlow(0f, 0f, 0f, 0)
+                l.setTop(statusTop + 6f * d, 26f * d, 14f * d * ovVis, tint, 0f, true, hardEdge = true)
+            } else if (searchVis > 0.01f) {
                 // Kereső felület: a fülek sávja mögé görgetett szöveg (és az állapotsor mögötti rész)
                 // elmosódik, lefelé lágyan elhalványuló átmenettel.
                 val bandH = segBar.top + segBar.translationY + segBar.height
@@ -849,6 +865,7 @@ class MainActivity : AppCompatActivity() {
         )
         listOf<ImageView>(iconBack, iconAdd, iconDone, btnMenu, btnReload).forEach { it.imageTintList = tint }
         if (::dockMenuBtn.isInitialized) dockMenuBtn.imageTintList = tint
+        updatePrivateUi()
         urlField.setTextColor(c)
         urlField.setHintTextColor(ColorUtils.setAlphaComponent(c, (Color.alpha(c) * 0.58f).toInt()))
         overviewLabel.setTextColor(c)
@@ -886,8 +903,10 @@ class MainActivity : AppCompatActivity() {
     private fun sampleLuminance() {
         // A sáv szövege a választott árnyalathoz igazodik (világos üvegen sötét, sötéten világos),
         // így minden oldal fölött olvasható, mint a hárompontos menüben.
-        applyContentColor(!glassDark())
-        if (true) return
+        if (!glassClear()) {
+            applyContentColor(!glassDark())
+            return
+        }
         if (!lensActive || probeBusy || capturing || barRow.width <= 0) return
         val left = barRow.left.coerceAtLeast(0)
         val right = barRow.right.coerceAtMost(root.width)
@@ -1143,6 +1162,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun createTab(): Tab {
         val wv = GlassWebView(this)
+        // Privát lap: külön WebView-profil (saját sütik, tárhely, gyorsítótár), ha a telefon
+        // WebView-ja tudja (Android System WebView 110+).
+        if (privateMode && privateProfileSupported()) {
+            try {
+                androidx.webkit.WebViewCompat.setProfile(wv, PRIVATE_PROFILE)
+            } catch (e: Throwable) {
+                // marad a normál profil
+            }
+        }
         // A rendszer saját túlgörgetési hatása (nyújtás) kikapcsolva: lehúzáskor az oldal teteje
         // ne nyúljon meg (attól lett szürke a színes fejléc); helyette a frissítés jelzője jön.
         wv.overScrollMode = View.OVER_SCROLL_NEVER
@@ -1153,6 +1181,7 @@ class MainActivity : AppCompatActivity() {
         // így a telefon jelszókezelője (pl. a Google) fel tudja ajánlani a mentett jelszavakat
         wv.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
         val tab = Tab(wv)
+        tab.isPrivate = privateMode
         applyWebSettings(wv)
         // A kezdőlapon a hosszú nyomás csak a csempe szerkesztőjét nyitja meg: a WebView saját
         // reakciója (a link "kiemelése", húzása, szövegkijelölés) itt ki van kapcsolva.
@@ -1218,6 +1247,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageCommitVisible(view: WebView?, url: String?) {
                 // amint az új oldal megjelenik, megkapja a felső térközt (ne ugorjon később)
                 view?.evaluateJavascript(topPadJs(), null)
+                probePadColor(tab, 250L)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -1225,6 +1255,7 @@ class MainActivity : AppCompatActivity() {
                 tab.progress = 5
                 if (url != null) tab.url = url
                 wv.resetInset()
+                tab.padColor = 0
                 tab.translated = false
                 tab.trPending = false
                 if (tab === activeTab) {
@@ -1247,8 +1278,10 @@ class MainActivity : AppCompatActivity() {
                         view?.evaluateJavascript(UserScripts.wrap(script.code), null)
                     }
                 }
-                HistoryStore.add(url, view?.title)
+                if (!tab.isPrivate) HistoryStore.add(url, view?.title)
                 if (Urls.isStart(url.orEmpty())) view?.evaluateJavascript(startPageJs(), null)
+                probePadColor(tab, 300L)
+                probePadColor(tab, 1500L)
                 if (tab === activeTab && view != null) offerTranslate(tab, view)
                 if (tab === activeTab) syncUi()
             }
@@ -1445,6 +1478,12 @@ class MainActivity : AppCompatActivity() {
         tab.thumbnail = null
         ThumbStore.delete(applicationContext, tab.id)
 
+        if (tabs.isEmpty() && tab.isPrivate) {
+            // az utolsó privát lap bezárult: vissza a normál lapokhoz
+            leavePrivate()
+            updateTabCount()
+            return
+        }
         if (tabs.isEmpty()) {
             // az utolsó lap is bezárult: új kezdőlap nyílik
             val fresh = createTab()
@@ -1470,9 +1509,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateTabCount() {
         tabCount.text = tabs.size.toString()
         overviewLabel.text = if (L.en) {
-            "${tabs.size} " + if (tabs.size == 1) "tab" else "tabs"
+            "${tabs.size} " + (if (privateMode) "private " else "") + if (tabs.size == 1) "tab" else "tabs"
         } else {
-            "${tabs.size} lap"
+            "${tabs.size} " + (if (privateMode) "privát lap" else "lap")
         }
     }
 
@@ -1519,8 +1558,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveTabs() {
+        // a privát lapokat nem mentjük
         val arr = JSONArray()
-        tabs.forEach { t ->
+        val active = if (privateMode) normalActive else activeTab
+        normalTabs.forEach { t ->
             val o = JSONObject()
             o.put("id", t.id)
             o.put("url", t.webView.url ?: t.pendingUrl ?: t.url)
@@ -1529,7 +1570,7 @@ class MainActivity : AppCompatActivity() {
         }
         prefs.edit()
             .putString(KEY_TABS, arr.toString())
-            .putInt(KEY_ACTIVE, tabs.indexOf(activeTab).coerceAtLeast(0))
+            .putInt(KEY_ACTIVE, normalTabs.indexOf(active).coerceAtLeast(0))
             .apply()
     }
 
@@ -1591,7 +1632,7 @@ class MainActivity : AppCompatActivity() {
         val bmp = renderPage(tab, 0.55f)
         if (bmp != null) {
             tab.thumbnail = bmp
-            ThumbStore.save(applicationContext, tab.id, bmp)
+            if (!tab.isPrivate) ThumbStore.save(applicationContext, tab.id, bmp)
             done()
             return
         }
@@ -1604,7 +1645,7 @@ class MainActivity : AppCompatActivity() {
         if (bmp != null) {
             tab.thumbnail = bmp
             snapshotFull = true
-            ThumbStore.save(applicationContext, tab.id, bmp)
+            if (!tab.isPrivate) ThumbStore.save(applicationContext, tab.id, bmp)
             shrinkOtherThumbnails(tab)
             done()
             return
@@ -1636,7 +1677,7 @@ class MainActivity : AppCompatActivity() {
                 PixelCopy.OnPixelCopyFinishedListener { result ->
                     if (result == PixelCopy.SUCCESS) {
                         tab.thumbnail = bmp
-                        ThumbStore.save(applicationContext, tab.id, bmp)
+                        if (!tab.isPrivate) ThumbStore.save(applicationContext, tab.id, bmp)
                     }
                     done()
                 },
@@ -1677,7 +1718,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupOverview() {
         tabAdapter = TabAdapter(
-            tabs = tabs,
+            tabsOf = { tabs },
             activeTab = { activeTab },
             hiddenTab = { heroTab },
             ringAlpha = { ringAlpha },
@@ -1954,7 +1995,7 @@ class MainActivity : AppCompatActivity() {
      * képernyőre (mint a menü morph-ja), mögötte a lapváltó kártyái kicsit hátrébb húzódnak és
      * elhalványulnak. A landolás után a lap finoman átúszik a valódi (már betöltött) oldalba.
      */
-    private fun openTabFromOverview(tab: Tab) {
+    private fun openTabFromOverview(tab: Tab, notify: Boolean = true) {
         if (!overviewShown) {
             selectTab(tab, animate = false)
             return
@@ -1963,16 +2004,19 @@ class MainActivity : AppCompatActivity() {
         overviewAnim?.cancel()
         // az új kártya a rácsban rejtve marad (nem villan fel üres kártya)
         heroTab = tab
-        tabAdapter.notifyItemInserted(tabs.indexOf(tab))
+        if (notify) tabAdapter.notifyItemInserted(tabs.indexOf(tab))
 
-        // a lap a képernyő közepéről, egy lapváltó-kártya méretéből nagyít ki (mint amikor a
-        // lapváltóból egy lapot megnyitsz)
-        val cw = hero.width * 0.44f
-        val ch = cw * 1.32f
-        val cx = hero.width / 2f
-        val cy = hero.height / 2f
+        // Mint a Safariban: az új lap alulról, abból a sarokból nő ki, ahová a rácsban kerül
+        // (bal oszlop: bal alulról, jobb oszlop: jobb alulról).
+        val col = tabs.indexOf(tab).coerceAtLeast(0) % 2
+        val anyCard = tabList.getChildAt(0)?.findViewById<View>(R.id.tabCard)
+        val cw = (anyCard?.width?.toFloat()?.takeIf { it > 0f }) ?: (hero.width * 0.44f)
+        val ch = (anyCard?.height?.toFloat()?.takeIf { it > 0f }) ?: (cw * 1.32f)
+        val margin = dp(18).toFloat()
+        val left = if (col == 0) margin else hero.width - margin - cw
+        val top = hero.height - ch * 0.45f
         val s = dp(22).toFloat()
-        val from = RectF(cx - cw / 2f, cy - ch / 2f, cx + cw / 2f, cy + ch / 2f)
+        val from = RectF(left, top, left + cw, top + ch)
         val full = RectF(0f, 0f, hero.width.toFloat(), hero.height.toFloat())
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -2008,7 +2052,7 @@ class MainActivity : AppCompatActivity() {
             val f = it.animatedValue as Float
             hero.progress = 1f - f
             // a kártya gyorsan előtűnik, majd teljes képernyőre nő
-            hero.alpha = (f / 0.18f).coerceIn(0f, 1f)
+            hero.alpha = (f / 0.12f).coerceIn(0f, 1f)
             val sc = 1f - 0.08f * f
             tabList.scaleX = sc
             tabList.scaleY = sc
@@ -2042,6 +2086,36 @@ class MainActivity : AppCompatActivity() {
         })
         overviewAnim = anim
         anim.start()
+    }
+
+    /**
+     * Az oldal fejlécének háttérszíne (CSS-ből), az állapotsor mögötti térköz egyszínű
+     * kitöltéséhez. Így nem nyúlnak fel az ikonok és a fejléc elemei az állapotsor mögé.
+     */
+    private fun probePadColor(tab: Tab, delay: Long) {
+        if (!flowLayout()) return
+        handler.postDelayed({
+            if (tab.webView.visibility != View.VISIBLE && tab !== activeTab) return@postDelayed
+            tab.webView.evaluateJavascript(PAD_COLOR_JS) { res ->
+                val c = parseCssColor(res?.trim('"').orEmpty())
+                if (c != tab.padColor) {
+                    tab.padColor = c
+                    if (tab === activeTab) updateLens()
+                }
+            }
+        }, delay)
+    }
+
+    private fun parseCssColor(css: String): Int {
+        val m = Regex("rgba?\\(([^)]*)\\)").find(css) ?: return 0
+        val p = m.groupValues[1].split(",").map { it.trim() }
+        if (p.size < 3) return 0
+        val r = p[0].toFloatOrNull() ?: return 0
+        val g = p[1].toFloatOrNull() ?: return 0
+        val b = p[2].toFloatOrNull() ?: return 0
+        val a = p.getOrNull(3)?.toFloatOrNull() ?: 1f
+        if (a < 0.95f) return 0
+        return Color.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b.toInt().coerceIn(0, 255))
     }
 
     /** Ennek változása megszakítja a "repülő" kép függőben lévő eltüntetését. */
@@ -2445,6 +2519,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setBarMode(overviewMode: Boolean, animate: Boolean) {
         barOverview = overviewMode
+        if (::privateBtn.isInitialized) fade(privateBtn, overviewMode, animate)
         updateTabCount()
         fade(iconBack, !overviewMode, animate)
         fade(iconAdd, overviewMode, animate)
@@ -3585,16 +3660,124 @@ class MainActivity : AppCompatActivity() {
         wv.loadUrl(b.build().toString())
     }
 
+    // ---------------------------------------------------------------- privát böngészés
+
+    private lateinit var privateBtn: ImageButton
+
+    private fun privateProfileSupported(): Boolean = try {
+        androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.MULTI_PROFILE)
+    } catch (e: Throwable) {
+        false
+    }
+
+    /** A lapváltó kapszulájában, a lapszám mellett bal oldalt: privát mód kapcsoló. */
+    private fun setupPrivateButton() {
+        val b = ImageButton(this)
+        b.setImageResource(R.drawable.ic_private)
+        b.setPadding(dp(8), dp(8), dp(8), dp(8))
+        b.scaleType = ImageView.ScaleType.FIT_CENTER
+        b.contentDescription = L.t("Privát böngészés")
+        b.visibility = View.INVISIBLE
+        b.alpha = 0f
+        b.setOnClickListener { setPrivateMode(!privateMode) }
+        val lp = FrameLayout.LayoutParams(dp(38), dp(38))
+        lp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        lp.marginStart = dp(7)
+        barCenter.addView(b, lp)
+        privateBtn = b
+        updatePrivateUi()
+    }
+
+    private fun updatePrivateUi() {
+        if (!::privateBtn.isInitialized) return
+        val c = contentColor ?: Color.WHITE
+        if (privateMode) {
+            privateBtn.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(c)
+            }
+            val inv = if (Color.red(c) > 128) 0xFF1D1F24.toInt() else Color.WHITE
+            privateBtn.imageTintList = ColorStateList.valueOf(inv)
+        } else {
+            privateBtn.background = null
+            privateBtn.imageTintList = ColorStateList.valueOf(c)
+        }
+        updateTabCount()
+    }
+
+    /** Váltás a normál és a privát lapok között (a lapváltóban a rács átúszik). */
+    private fun setPrivateMode(on: Boolean) {
+        if (privateMode == on || overviewBusy) return
+        haptic()
+        if (on) normalActive = activeTab else privateActive = activeTab
+        privateMode = on
+        tabs = if (on) privateTabs else normalTabs
+        updatePrivateUi()
+        if (tabs.isEmpty()) {
+            // első privát lap: egy új kezdőlap nyílik
+            val t = createTab()
+            t.url = homeUrl()
+            t.pendingUrl = t.url
+            tabAdapter.notifyDataSetChanged()
+            updateTabCount()
+            if (overviewShown) openTabFromOverview(t, notify = false) else selectTab(t)
+            return
+        }
+        val target = (if (on) privateActive else normalActive)?.takeIf { it in tabs } ?: tabs.last()
+        if (overviewShown) {
+            tabList.animate().cancel()
+            tabList.animate().alpha(0f).setDuration(130).withEndAction {
+                selectTab(target, animate = false)
+                tabAdapter.notifyDataSetChanged()
+                updateTabCount()
+                tabList.scrollToPosition(tabs.indexOf(target).coerceAtLeast(0))
+                tabList.animate().alpha(1f).setDuration(200).start()
+            }.start()
+        } else {
+            selectTab(target)
+        }
+    }
+
+    /** Az utolsó privát lap bezárása után: vissza a normál lapokhoz, a privát adatok törlődnek. */
+    private fun leavePrivate() {
+        privateMode = false
+        privateActive = null
+        tabs = normalTabs
+        tabAdapter.notifyDataSetChanged()
+        updatePrivateUi()
+        val target = normalActive?.takeIf { it in tabs } ?: tabs.lastOrNull() ?: createTab().also {
+            it.url = homeUrl()
+            it.pendingUrl = it.url
+            tabAdapter.notifyDataSetChanged()
+        }
+        selectTab(target, animate = false)
+        handler.postDelayed({ deletePrivateData() }, 600L)
+    }
+
+    private fun deletePrivateData() {
+        if (privateTabs.isNotEmpty() || !privateProfileSupported()) return
+        try {
+            androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE)
+        } catch (e: Throwable) {
+            // még használatban van, vagy nem létezik
+        }
+    }
+
     private var urlCopied = false
 
-    private fun menuTextColor(): Int = if (glassDark()) Color.WHITE else 0xFF1D1F24.toInt()
+    private fun menuTextColor(): Int = if (glassClear()) (contentColor ?: Color.WHITE)
+        else if (glassDark()) Color.WHITE else 0xFF1D1F24.toInt()
 
     /** Az üvegfelületek árnyalata: a rendszer módja szerint, vagy kézzel világos / sötét. */
     private fun glassDark(): Boolean = when (prefs.getString("glass_tone", "system")) {
         "light" -> false
         "dark" -> true
+        "clear" -> !darkContent
         else -> night
     }
+
+    /** Átlátszó üveg: nincs dér, a szöveg színe a mögötte lévő oldalhoz igazodik. */
+    private fun glassClear(): Boolean = prefs.getString("glass_tone", "system") == "clear" && lensActive
 
     private fun copyUrl() {
         val url = currentUrl
@@ -4398,6 +4581,21 @@ window.__gt={nodes:nodes,orig:nodes.map(function(x){return x.nodeValue;})};
 window.__gtApply=function(s,arr){var g=window.__gt;if(!g)return;for(var i=0;i<arr.length;i++){var nd=g.nodes[s+i];if(!nd)continue;var o=g.orig[s+i];var a=o.match(/^\s*/)[0],b=o.match(/\s*$/)[0];nd.nodeValue=a+arr[i]+b;}};
 window.__gtUndo=function(){var g=window.__gt;if(!g)return;for(var i=0;i<g.nodes.length;i++)g.nodes[i].nodeValue=g.orig[i];};
 return JSON.stringify(out);})()"""
+
+        private const val PRIVATE_PROFILE = "GlassPrivate"
+
+        /** Az oldal tetején lévő fejléc háttérszíne (ha háromponton is ugyanaz, egyébként üres). */
+        const val PAD_COLOR_JS = """(function(){
+var H=parseFloat(getComputedStyle(document.documentElement).paddingTop)||0;var y=H+2;
+function clear(c){return !c||c==='transparent'||/rgba\([^)]*,\s*0\)$/.test(c);}
+function bg(e){while(e&&e.nodeType===1){var s=getComputedStyle(e);
+if(s.backgroundImage&&s.backgroundImage!=='none'&&e!==document.body&&e!==document.documentElement)return '';
+if(!clear(s.backgroundColor))return s.backgroundColor;e=e.parentElement;}
+var b=getComputedStyle(document.body).backgroundColor;if(!clear(b))return b;
+var h=getComputedStyle(document.documentElement).backgroundColor;return clear(h)?'':h;}
+var xs=[3,innerWidth/2,innerWidth-4];var r=null;
+for(var i=0;i<xs.length;i++){var c=bg(document.elementFromPoint(xs[i],y));if(!c)return '';if(r===null)r=c;else if(r!==c)return '';}
+return r||'';})()"""
 
         const val SPACER_JS =
             "(function(){if(document.getElementById('__glass_spacer'))return;" +

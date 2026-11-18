@@ -368,6 +368,32 @@ class MainActivity : AppCompatActivity() {
     private fun setupGlow() {
         // a középső kapszulát oldalra húzva lapot vált (mint a Safariban)
         (barCenter as? PressLayout)?.let { pl ->
+            // Koppintás: a kapszula három zónára oszlik. Bal szél (a ••• gomb és egy láthatatlan
+            // margó mellette) = menü, jobb szél (frissítés + margó) = frissítés, a teljes közép = keresés.
+            pl.onTap = { x, _ ->
+                if (barOverview || overviewShown || urlField.hasFocus() || overviewBusy) {
+                    false
+                } else {
+                    val margin = dp(10)
+                    val menuRight = if (btnMenu.visibility == View.VISIBLE) {
+                        relX(btnMenu, pl) + btnMenu.width + margin
+                    } else -1
+                    val reloadLeft = if (btnReload.visibility == View.VISIBLE) {
+                        relX(btnReload, pl) - margin
+                    } else Int.MAX_VALUE
+                    when {
+                        x < menuRight -> btnMenu.performClick()
+                        x > reloadLeft -> btnReload.performClick()
+                        collapsed -> setCollapsed(false)
+                        else -> {
+                            urlField.requestFocus()
+                            val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                            urlField.post { imm?.showSoftInput(urlField, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
+                        }
+                    }
+                    true
+                }
+            }
             pl.onSwipeMove = { dx -> if (!barOverview && !overviewShown) swipeTabFollow(dx) }
             pl.onSwipe = { dx, commit ->
                 if (barOverview || overviewShown) {
@@ -797,6 +823,17 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     /** Egy nézet tényleges (nagyítással, eltolással együtt számolt) helye a gyökérnézetben. */
+    /** A [v] bal széle a [ancestor] nézeten belül (a köztes szülők eltolásával). */
+    private fun relX(v: View, ancestor: View): Int {
+        var x = 0
+        var cur: View = v
+        while (cur !== ancestor) {
+            x += cur.left
+            cur = cur.parent as? View ?: break
+        }
+        return x
+    }
+
     private fun visualRect(v: View, out: RectF) {
         out.set(0f, 0f, v.width.toFloat(), v.height.toFloat())
         var cur: View = v

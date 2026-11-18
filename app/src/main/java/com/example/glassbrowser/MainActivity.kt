@@ -1233,6 +1233,47 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private var statusProbeBusy = false
 
     /** Megméri, milyen világos az állapotsor mögötti rész (fehér fejlécnél sötét ikonok kellenek). */
+    // ---------------------------------------------------------------- betöltés közbeni elmosás
+
+    private val loadBlurAnim = HashMap<Tab, ValueAnimator>()
+    private val loadBlurR = HashMap<Tab, Float>()
+
+    /** Amíg a lap betölt, finoman elmosódik; amint megjelenik, lágyan kiélesedik. */
+    private fun setLoadBlur(tab: Tab, on: Boolean) {
+        if (Build.VERSION.SDK_INT < 31) return
+        val target = if (on) dp(16).toFloat() else 0f
+        val cur = loadBlurR[tab] ?: 0f
+        val running = loadBlurAnim[tab]
+        if (!on && cur <= 0.5f && running == null) return
+        if (on && cur >= target - 0.5f) return
+        running?.cancel()
+        val a = ValueAnimator.ofFloat(cur, target)
+        a.duration = if (on) 220L else 460L
+        a.interpolator = DecelerateInterpolator(if (on) 1.2f else 1.8f)
+        a.addUpdateListener {
+            val r = it.animatedValue as Float
+            loadBlurR[tab] = r
+            // lapváltás közben az átmenet kezeli a lap effektjét
+            if (swipeFrom == null && tabSwipeAnim?.isRunning != true) {
+                tab.webView.setRenderEffect(
+                    if (r < 0.5f) null
+                    else android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP)
+                )
+            }
+        }
+        a.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                if (loadBlurAnim[tab] === a) loadBlurAnim.remove(tab)
+                if (!on) {
+                    loadBlurR.remove(tab)
+                    if (swipeFrom == null && tabSwipeAnim?.isRunning != true) tab.webView.setRenderEffect(null)
+                }
+            }
+        })
+        loadBlurAnim[tab] = a
+        a.start()
+    }
+
     /** Lapváltás (sáv húzása) közben a képernyő két lap keveréke: ilyenkor nem mérünk színt. */
     private fun swipeBusy(): Boolean =
         swipeFrom != null || tabSwipeAnim?.isRunning == true || swActive
@@ -1489,9 +1530,19 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // sötét témában a világos oldalakat is sötétíti
             wv.settings.setAlgorithmicDarkeningAllowed(prefs.getBoolean("dark_web", true))
         }
-        val cm = CookieManager.getInstance()
-        cm.setAcceptCookie(true)
-        cm.setAcceptThirdPartyCookies(wv, prefs.getBoolean("third_party_cookies", true))
+        // privát lapnál a saját profil sütikezelője (a normál profilé ott nem érvényes)
+        val cm = try {
+            if (privateProfileSupported()) androidx.webkit.WebViewCompat.getProfile(wv).cookieManager
+            else CookieManager.getInstance()
+        } catch (e: Throwable) {
+            CookieManager.getInstance()
+        }
+        try {
+            cm.setAcceptCookie(true)
+            cm.setAcceptThirdPartyCookies(wv, prefs.getBoolean("third_party_cookies", true))
+        } catch (e: Throwable) {
+            // nem támogatott
+        }
     }
 
     private fun applyAllSettings() {
@@ -1568,6 +1619,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         // WebView-ja tudja (Android System WebView 110+).
         if (privateMode && privateProfileSupported()) {
             try {
+                // a profil biztosan létezzen (egy korábbi privát munkamenet után törölve lehet)
+                androidx.webkit.ProfileStore.getInstance().getOrCreateProfile(PRIVATE_PROFILE)
                 androidx.webkit.WebViewCompat.setProfile(wv, PRIVATE_PROFILE)
             } catch (e: Throwable) {
                 // marad a normál profil
@@ -1668,6 +1721,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                if (!Urls.isStart(url.orEmpty())) setLoadBlur(tab, true)
                 tab.loading = true
                 tab.progress = 5
                 if (url != null) tab.url = url
@@ -1702,6 +1756,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                setLoadBlur(tab, false)
                 tab.loading = false
                 tab.stayInBrowser = false
                 // Üres hely az oldal aljára, hogy a lebegő sáv ne takarja a tartalmat
@@ -1735,6 +1790,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 tab.progress = newProgress
+                // az oldal nagyja már kirajzolódott: az elmosás szépen eltűnik
+                if (newProgress >= 80) setLoadBlur(tab, false)
                 if (tab === activeTab) syncUi()
             }
 
@@ -5354,8 +5411,20 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         privateMode = false
         privateActive = null
         tabs = normalShown()
+        // a lapváltóban: a normál lapok finoman beúsznak (halványulás + enyhe nagyítás)
+        if (overviewShown) {
+            tabList.animate().cancel()
+            tabList.alpha = 0f
+            tabList.scaleX = 0.94f
+            tabList.scaleY = 0.94f
+            tabList.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(60L).setDuration(340L)
+                .setInterpolator(DecelerateInterpolator(1.8f))
+                .setUpdateListener { updateLens() }
+                .withEndAction { updateLens() }.start()
+            showGroupCapsule()
+        }
         tabAdapter.notifyDataSetChanged()
-        updatePrivateUi()
+        updatePrivateUi(animateLabel = true)
         val target = normalActive?.takeIf { it in tabs } ?: tabs.lastOrNull() ?: createTab().also {
             it.url = homeUrl()
             it.pendingUrl = it.url
@@ -7176,13 +7245,15 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     /** A lap állapotsor mögötti (tömör) színe, ha ismert; 0, ha ott elmosott tartalom van. */
     private fun statusColorOf(t: Tab): Int {
+        // Csak a lap tetején van tömör szín az állapotsor mögött; legörgetett lapnál ott
+        // elmosott tartalom van (a fejléc színe ilyenkor nem villanhat fel).
+        if (effScroll(t) >= statusTop) return 0
         val c = when {
             t.fixedHeader && t.headerColor != 0 -> t.headerColor
-            effScroll(t) < statusTop -> t.padColor
-            else -> 0
+            else -> t.padColor
         }
         if (c != 0) return c
-        // ismeretlen (pl. legörgetett lap): a lap utolsó képének legfelső sora
+        // ismeretlen: a lap utolsó képének legfelső sora
         val bm = t.thumbnail ?: return 0
         return try {
             if (bm.isRecycled || bm.config == Bitmap.Config.HARDWARE || bm.width < 4 || bm.height < 4) 0

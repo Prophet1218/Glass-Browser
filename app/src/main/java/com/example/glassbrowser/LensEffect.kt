@@ -402,35 +402,8 @@ vec4 glass(vec2 c, vec4 rect, float radius, float d, float blur, float strength)
 }
 
 half4 main(vec2 c) {
-    if (topH > 0.0 && c.y < topH + topExt) {
-        float w = 1.0;
-        vec2 s = c;
-        if (topMode < 0.5) {
-            if (c.y > topH) {
-                w = 1.0 - (c.y - topH) / max(topExt, 1.0);
-            }
-            s = vec2(c.x, max(c.y, topH) + topBlur * w);
-        } else {
-            // átúszó: az állapotsor felső részén teljes erővel, onnan lefelé egyenletesen,
-            // fokozatosan gyengül; a teljes szélességben
-            // lefelé lágyan, folyamatosan halványul (az eddigi kiterjedésen belül marad)
-            if (topMode > 1.5) {
-                w = 1.0 - smoothstep(topH, topH + topExt, c.y);
-            } else {
-                float t = clamp(c.y / max(topH + topExt, 1.0), 0.0, 1.0);
-                w = 1.0 - smoothstep(0.2, 1.0, t);
-            }
-        }
-        vec4 col = blurAt(s, topBlur * w);
-        if (topMode > 0.5) {
-            // az elmosott és az éles kép között átúsztatunk, így nincs látható határ
-            col = mix(vec4(tap(c)), col, w);
-        }
-        float ta = topTint.a * w;
-        col.rgb = col.rgb * (1.0 - ta) + topTint.rgb * ta;
-        col.a = 1.0;
-        return half4(col);
-    }
+    // the glass surfaces come first: a capsule inside the top blur band (e.g. the tab group
+    // capsule in the tab overview) is real glass, not covered by the band
     if (g0.z > g0.x) {
         float d0 = sdRect(c, g0, p0.x);
         if (d0 < 0.0) {
@@ -466,6 +439,35 @@ half4 main(vec2 c) {
         if (d5 < 0.0) {
             return half4(glass(c, g5, p5.x, d5, p5.y, p5.z));
         }
+    }
+    if (topH > 0.0 && c.y < topH + topExt) {
+        float w = 1.0;
+        vec2 s = c;
+        if (topMode < 0.5) {
+            if (c.y > topH) {
+                w = 1.0 - (c.y - topH) / max(topExt, 1.0);
+            }
+            s = vec2(c.x, max(c.y, topH) + topBlur * w);
+        } else {
+            // átúszó: az állapotsor felső részén teljes erővel, onnan lefelé egyenletesen,
+            // fokozatosan gyengül; a teljes szélességben
+            // lefelé lágyan, folyamatosan halványul (az eddigi kiterjedésen belül marad)
+            if (topMode > 1.5) {
+                w = 1.0 - smoothstep(topH, topH + topExt, c.y);
+            } else {
+                float t = clamp(c.y / max(topH + topExt, 1.0), 0.0, 1.0);
+                w = 1.0 - smoothstep(0.2, 1.0, t);
+            }
+        }
+        vec4 col = blurAt(s, topBlur * w);
+        if (topMode > 0.5) {
+            // az elmosott és az éles kép között átúsztatunk, így nincs látható határ
+            col = mix(vec4(tap(c)), col, w);
+        }
+        float ta = topTint.a * w;
+        col.rgb = col.rgb * (1.0 - ta) + topTint.rgb * ta;
+        col.a = 1.0;
+        return half4(col);
     }
     return content.eval(c);
 }

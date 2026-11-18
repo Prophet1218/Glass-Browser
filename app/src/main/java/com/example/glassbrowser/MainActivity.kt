@@ -959,6 +959,15 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 l.setFlow(0f, 0f, 0f, 0)
             }
 
+            // lapváltás a sáv húzásával: az állapotsor színe a két lap között vált
+            if (swActive && !overviewShown) {
+                val c = swipeStatusColor()
+                if (c != 0) {
+                    l.setPadColor(c)
+                    l.setTop(statusTop.toFloat(), 0f, 0f, 0, statusTop.toFloat(), true)
+                }
+            }
+
             // a keresősáv három része
             if (docked) {
                 // rögzített sáv: egyetlen, teljes szélességű üveg
@@ -1233,6 +1242,17 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * görgetés közben sötét tartalom kerül mögé, világosak. Egyébként a világos / sötét mód szerint.
      */
     private fun syncStatusIcons() {
+        if (swActive) {
+            val c = swipeStatusColor()
+            if (c != 0 && Color.alpha(c) > 128) {
+                val lightBg = ColorUtils.calculateLuminance(c) > 0.5
+                if (statusLightCache != lightBg) {
+                    statusLightCache = lightBg
+                    WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = lightBg
+                }
+                return
+            }
+        }
         val sb = statusBright
         val searchOver = searchPage.visibility == View.VISIBLE && searchPage.alpha >= 0.5f
         val light = if (flowLayout() && sb != null && !overviewShown && !searchOver &&
@@ -7046,21 +7066,60 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     // ---------------------------------------------------------------- lapváltás a keresősávon
 
     /**
-     * A keresősávot oldalra húzva az előző / következő lapra vált (mint a Safariban). Az átmenet
-     * a beállításokban választható (tab_swipe_anim): csúszás, elhalványulás, elmosás, lapozás
-     * (mint egy könyv lapja), kocka, nagyítás, kártyapakli.
+     * A keresősávot oldalra húzva az előző / következő lapra vált (mint a Safariban). Az egész
+     * átmenet az ujjat követi: húzás közben már a szomszéd lap is látszik, elengedéskor onnan fut
+     * tovább (vagy rugózva vissza). Választható (tab_swipe_anim): lapozás (mint egy könyv lapja),
+     * csúszás, elhalványulás, elmosás, nagyítás, kártyapakli. Közben az állapotsor színe is
+     * a két lap között vált, a haladással arányosan.
      */
-    private fun tabSwipeStyle(): String = prefs.getString("tab_swipe_anim", "page") ?: "page"
+    private fun tabSwipeStyle(): String {
+        val st = prefs.getString("tab_swipe_anim", "page") ?: "page"
+        return if (st == "cube") "page" else st
+    }
 
     private var tabSwipeAnim: ValueAnimator? = null
-    /** Húzás közben elért haladás (az elengedéskor innen folytatódik). */
-    private var swipeDragP = 0f
-    private var swipeDragDir = 0
+    private var swipeP = 0f
+    private var swipeDir = 0
+    private var swipeFrom: Tab? = null
+    private var swipeTo: Tab? = null
+    /** Állapotsor átmenet húzás / lapváltás közben. */
+    private var swActive = false
+    private var swOldColor = 0
+    private var swNewColor = 0
+    private var turnShade: View? = null
+
+    /** A lap állapotsor mögötti (tömör) színe, ha ismert; 0, ha ott elmosott tartalom van. */
+    private fun statusColorOf(t: Tab): Int = when {
+        t.fixedHeader && t.headerColor != 0 -> t.headerColor
+        effScroll(t) < statusTop -> t.padColor
+        else -> 0
+    }
+
+    private fun swipeStatusColor(): Int {
+        val a = swOldColor
+        val b = swNewColor
+        val p = swipeP.coerceIn(0f, 1f)
+        return when {
+            a != 0 && b != 0 -> ColorUtils.blendARGB(a, b, p)
+            a != 0 -> ColorUtils.setAlphaComponent(a, (255 * (1f - p)).toInt())
+            b != 0 -> ColorUtils.setAlphaComponent(b, (255 * p).toInt())
+            else -> 0
+        }
+    }
+
+    private fun ensureTurnShade(): View {
+        turnShade?.let { return it }
+        val v = View(this)
+        v.isClickable = false
+        v.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        turnShade = v
+        return v
+    }
 
     /** Mindkét lap állapota a [p] haladásnál (0 = régi lap, 1 = új lap a helyén). */
     private fun tabSwipeFx(old: View, new: View?, p: Float, dir: Int, style: String) {
         val w = contentContainer.width.toFloat().coerceAtLeast(1f)
-        val dist = 12000f * resources.displayMetrics.density
+        val dist = 9000f * resources.displayMetrics.density
         fun blur(v: View, r: Float) {
             if (Build.VERSION.SDK_INT >= 31) {
                 v.setRenderEffect(if (r < 0.5f) null else android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP))
@@ -7086,44 +7145,36 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 }
             }
             "page" -> {
-                // könyvlapozás: a felső lap a gerince (bal szél) körül fordul át; előre lapozáskor
-                // a régi lap fordul el, visszafelé az új lap fordul vissza a régi fölé
-                if (dir > 0) {
-                    old.cameraDistance = dist
-                    old.pivotX = 0f
-                    old.pivotY = old.height / 2f
-                    old.rotationY = -100f * p
-                    old.alpha = if (p > 0.85f) (1f - (p - 0.85f) / 0.15f) else 1f
-                    new?.let {
-                        it.alpha = 0.55f + 0.45f * p
-                        it.scaleX = 0.94f + 0.06f * p
-                        it.scaleY = it.scaleX
-                    }
-                } else {
-                    old.alpha = 1f - 0.45f * p
-                    old.scaleX = 1f - 0.06f * p
-                    old.scaleY = old.scaleX
-                    new?.let {
-                        it.cameraDistance = dist
-                        it.pivotX = 0f
-                        it.pivotY = it.height / 2f
-                        it.rotationY = -100f * (1f - p)
-                        it.alpha = if (p < 0.15f) p / 0.15f else 1f
-                    }
-                }
-            }
-            "cube" -> {
-                old.cameraDistance = dist
-                old.pivotX = if (dir > 0) w else 0f
-                old.pivotY = old.height / 2f
-                old.rotationY = -dir * 90f * p
-                old.translationX = -dir * w * p
-                new?.let {
+                // Könyvlapozás: a felső lap a gerince (bal szél) körül fordul át. Fordulás közben
+                // kicsit megemelkedik és „meghajlik” (a szabad széle felé sötétedő árnyék fut rajta),
+                // az alatta lévő lap a gerinc mentén árnyékból világosodik ki.
+                val turning = if (dir > 0) old else new
+                val below = if (dir > 0) new else old
+                val t = if (dir > 0) p else 1f - p          // a felső lap elfordulása (0..1)
+                val lift = kotlin.math.sin(Math.PI * t).toFloat()
+                turning?.let {
                     it.cameraDistance = dist
-                    it.pivotX = if (dir > 0) 0f else w
+                    it.pivotX = 0f
                     it.pivotY = it.height / 2f
-                    it.rotationY = dir * 90f * (1f - p)
-                    it.translationX = dir * w * (1f - p)
+                    it.rotationY = -98f * t
+                    it.scaleY = 1f + 0.035f * lift
+                    it.translationX = 0f
+                    it.alpha = if (t > 0.9f) (1f - (t - 0.9f) / 0.1f) else 1f
+                }
+                below?.let {
+                    it.alpha = 1f
+                    it.scaleX = 0.965f + 0.035f * t
+                    it.scaleY = it.scaleX
+                    it.translationX = 0f
+                }
+                // a felső lapra rajzolt árnyék ugyanúgy fordul, mint a lap
+                turnShade?.let { sh ->
+                    sh.cameraDistance = dist
+                    sh.pivotX = 0f
+                    sh.pivotY = sh.height / 2f
+                    sh.rotationY = -98f * t
+                    sh.scaleY = 1f + 0.035f * lift
+                    sh.alpha = (0.15f + 0.85f * lift).coerceIn(0f, 1f) * (if (t > 0.9f) (1f - (t - 0.9f) / 0.1f) else 1f)
                 }
             }
             "zoom" -> {
@@ -7163,88 +7214,164 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (Build.VERSION.SDK_INT >= 31) v.setRenderEffect(null)
     }
 
-    private fun swipeToTab(dir: Int) {
-        val cur = activeTab ?: return
-        val idx = tabs.indexOf(cur)
-        val next = tabs.getOrNull(idx + dir)
-        val ow = cur.webView
-        val style = tabSwipeStyle()
-        tabSwipeAnim?.cancel()
-        if (next == null || overviewShown || overviewBusy) {
-            // nincs több lap arra: gumiszerű visszarugózás
-            cancelTabSwipe()
-            return
+    /** A szomszéd lap előkészítése (a régi alá / fölé), még kiválasztás nélkül. */
+    private fun attachSwipeTarget(from: Tab, to: Tab, dir: Int, style: String) {
+        val nw = to.webView
+        applyWebTop(nw)
+        if (nw.parent == null) contentContainer.addView(nw)
+        nw.visibility = View.VISIBLE
+        nw.onResume()
+        to.pendingUrl?.let { u ->
+            to.pendingUrl = null
+            to.stayInBrowser = true
+            nw.loadUrl(u)
         }
-        haptic()
-        val from = if (swipeDragDir == dir) swipeDragP else 0f
-        swipeDragP = 0f
-        swipeDragDir = 0
-        selectTab(next, animate = true)
-        val nw = next.webView
-        nw.animate().cancel()
-        ow.animate().cancel()
         resetSwipeFx(nw)
-        // lapozásnál előre a régi lap van felül (az fordul el), visszafelé az új
-        if (style == "page" && dir > 0) ow.bringToFront()
-        if (style == "deck") nw.bringToFront()
-        tabSwipeFx(ow, nw, from, dir, style)
-        val a = ValueAnimator.ofFloat(from, 1f)
-        a.duration = when (style) {
-            "page", "cube" -> 520L
-            "blur" -> 420L
-            else -> 380L
+        val ow = from.webView
+        // rétegsorrend: lapozásnál a forduló lap van felül, a paklinál az új lap
+        val newOnTop = when (style) {
+            "page" -> dir < 0
+            "fade", "blur", "zoom" -> true
+            else -> true
         }
-        a.interpolator = if (style == "page") android.view.animation.PathInterpolator(0.3f, 0.1f, 0.2f, 1f)
-        else DecelerateInterpolator(1.8f)
-        a.addUpdateListener { tabSwipeFx(ow, nw, it.animatedValue as Float, dir, style) }
+        if (newOnTop) nw.bringToFront() else ow.bringToFront()
+        if (style == "page") {
+            val sh = ensureTurnShade()
+            (sh.parent as? ViewGroup)?.removeView(sh)
+            // árnyék a forduló lapon: a gerinctől a szabad szél felé sötétedik
+            sh.background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.argb(0, 0, 0, 0), Color.argb(40, 0, 0, 0), Color.argb(120, 0, 0, 0))
+            )
+            contentContainer.addView(sh, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            sh.visibility = View.VISIBLE
+            sh.alpha = 0f
+        }
+        kickRepaint(nw)
+    }
+
+    private fun removeTurnShade() {
+        turnShade?.let { (it.parent as? ViewGroup)?.removeView(it) }
+    }
+
+    private fun beginSwipe(dir: Int): Boolean {
+        val cur = activeTab ?: return false
+        val to = tabs.getOrNull(tabs.indexOf(cur) + dir)
+        if (swipeFrom === cur && swipeDir == dir && swipeTo === to) return to != null
+        // irányváltás: az előző jelölt lap eltűnik
+        swipeTo?.let { prev ->
+            if (prev !== cur) {
+                resetSwipeFx(prev.webView)
+                prev.webView.visibility = View.GONE
+            }
+        }
+        removeTurnShade()
+        resetSwipeFx(cur.webView)
+        swipeFrom = cur
+        swipeTo = to
+        swipeDir = dir
+        swOldColor = statusColorOf(cur)
+        swNewColor = to?.let { statusColorOf(it) } ?: 0
+        swActive = to != null && (swOldColor != 0 || swNewColor != 0)
+        if (to != null) attachSwipeTarget(cur, to, dir, tabSwipeStyle())
+        return to != null
+    }
+
+    /** Húzás közben az egész átmenet az ujjat követi. */
+    private fun swipeTabFollow(dx: Float) {
+        if (overviewShown || overviewBusy) return
+        val cur = activeTab ?: return
+        tabSwipeAnim?.cancel()
+        val dir = if (dx < 0f) 1 else -1
+        val has = beginSwipe(dir)
+        val w = contentContainer.width.toFloat().coerceAtLeast(1f)
+        val style = tabSwipeStyle()
+        if (has) {
+            swipeP = (kotlin.math.abs(dx) / (w * 0.85f)).coerceIn(0f, 1f)
+            tabSwipeFx(cur.webView, swipeTo?.webView, swipeP, dir, style)
+        } else {
+            // a szélső lapnál csak gumiszerűen enged
+            swipeP = (kotlin.math.abs(dx) / w * 0.12f).coerceIn(0f, 0.12f)
+            tabSwipeFx(cur.webView, null, swipeP, dir, "slide")
+        }
+        updateLens()
+    }
+
+    private fun runSwipe(to: Float, done: () -> Unit) {
+        val from = swipeP
+        val old = swipeFrom?.webView ?: return
+        val nw = swipeTo?.webView
+        val dir = swipeDir
+        val style = if (nw == null) "slide" else tabSwipeStyle()
+        tabSwipeAnim?.cancel()
+        val a = ValueAnimator.ofFloat(from, to)
+        val span = kotlin.math.abs(to - from).coerceIn(0.25f, 1f)
+        a.duration = ((if (style == "page") 620L else 420L) * span).toLong()
+        a.interpolator = when {
+            to < from -> OvershootInterpolator(1.2f)
+            style == "page" -> android.view.animation.PathInterpolator(0.25f, 0.1f, 0.25f, 1f)
+            else -> DecelerateInterpolator(1.8f)
+        }
+        a.addUpdateListener {
+            swipeP = (it.animatedValue as Float).coerceIn(0f, 1f)
+            tabSwipeFx(old, nw, swipeP, dir, style)
+            updateLens()
+        }
         a.addListener(object : android.animation.AnimatorListenerAdapter() {
+            private var cancelled = false
+            override fun onAnimationCancel(animation: android.animation.Animator) {
+                cancelled = true
+            }
+
             override fun onAnimationEnd(animation: android.animation.Animator) {
-                resetSwipeFx(ow)
-                resetSwipeFx(nw)
-                nw.bringToFront()
-                removeInactiveWebViews()
-                updateLens()
+                if (!cancelled) done()
             }
         })
         tabSwipeAnim = a
         a.start()
     }
 
-    /** Elengedés a küszöb előtt: a lap visszaáll. */
-    private fun cancelTabSwipe() {
-        val wv = activeWebView ?: return
-        val style = tabSwipeStyle()
-        val from = swipeDragP
-        val dir = if (swipeDragDir == 0) 1 else swipeDragDir
-        swipeDragP = 0f
-        swipeDragDir = 0
-        tabSwipeAnim?.cancel()
-        val a = ValueAnimator.ofFloat(from, 0f)
-        a.duration = 380L
-        a.interpolator = OvershootInterpolator(1.6f)
-        a.addUpdateListener { tabSwipeFx(wv, null, (it.animatedValue as Float).coerceAtLeast(0f), dir, style) }
-        a.addListener(object : android.animation.AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: android.animation.Animator) = resetSwipeFx(wv)
-        })
-        tabSwipeAnim = a
-        a.start()
+    private fun endSwipeState() {
+        swipeFrom?.let { resetSwipeFx(it.webView) }
+        swipeTo?.let { resetSwipeFx(it.webView) }
+        removeTurnShade()
+        swipeFrom = null
+        swipeTo = null
+        swipeDir = 0
+        swipeP = 0f
+        swActive = false
     }
 
-    /** Húzás közben a lap az átmenet első részét követi (ha arra van még lap). */
-    private fun swipeTabFollow(dx: Float) {
-        val cur = activeTab ?: return
-        val wv = cur.webView
-        val dir = if (dx < 0f) 1 else -1
-        val has = tabs.getOrNull(tabs.indexOf(cur) + dir) != null
-        tabSwipeAnim?.cancel()
-        wv.animate().cancel()
-        val w = contentContainer.width.toFloat().coerceAtLeast(1f)
-        // a szélső lapnál csak enyhén enged (gumi)
-        val p = (kotlin.math.abs(dx) / w * (if (has) 0.7f else 0.12f)).coerceIn(0f, 0.45f)
-        if (swipeDragDir != 0 && swipeDragDir != dir) resetSwipeFx(wv)
-        swipeDragDir = dir
-        swipeDragP = p
-        tabSwipeFx(wv, null, p, dir, tabSwipeStyle())
+    /** Elengedés messzire: befejezi a lapváltást. */
+    private fun swipeToTab(@Suppress("UNUSED_PARAMETER") dirHint: Int) {
+        val to = swipeTo
+        val from = swipeFrom
+        if (to == null || from == null || overviewShown || overviewBusy) {
+            cancelTabSwipe()
+            return
+        }
+        haptic()
+        runSwipe(1f) {
+            endSwipeState()
+            selectTab(to, animate = false)
+            // az új lap állapotsora: a lap saját színével azonnal (a mérés később pontosít)
+            updateLens()
+        }
+    }
+
+    /** Elengedés a küszöb előtt: minden visszaáll. */
+    private fun cancelTabSwipe() {
+        if (swipeFrom == null) {
+            activeWebView?.let { resetSwipeFx(it) }
+            return
+        }
+        runSwipe(0f) {
+            val to = swipeTo
+            endSwipeState()
+            if (to != null && to !== activeTab) to.webView.visibility = View.GONE
+            activeWebView?.bringToFront()
+            updateLens()
+        }
     }
 
     companion object {

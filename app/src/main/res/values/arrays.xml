@@ -129,7 +129,6 @@
         <item>Csúszás</item>
         <item>Elhalványulás</item>
         <item>Elmosódó átmenet</item>
-        <item>Kocka</item>
         <item>Nagyítás</item>
         <item>Kártyapakli</item>
     </string-array>
@@ -138,7 +137,6 @@
         <item>slide</item>
         <item>fade</item>
         <item>blur</item>
-        <item>cube</item>
         <item>zoom</item>
         <item>deck</item>
     </string-array>

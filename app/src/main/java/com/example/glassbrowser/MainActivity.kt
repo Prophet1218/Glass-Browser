@@ -664,9 +664,10 @@ class MainActivity : AppCompatActivity() {
         val webTopY = if (dockTop) statusTop + dockHeight() else statusTop
         (progress.layoutParams as FrameLayout.LayoutParams).topMargin = webTopY
         tabList.setPadding(
-            dp(9), webTopY + dp(10), dp(9),
+            dp(9), webTopY + dp(10) + dp(GROUP_BAR_SPACE_DP), dp(9),
             navBottom + if (dockTop) dp(24) else barHeight + dp(30)
         )
+        layoutGroupCapsule(webTopY)
         tabs.forEach { applyWebTop(it.webView) }
         applyBottomInset(lastBottom)
         root.requestLayout()
@@ -1803,6 +1804,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         } else {
             "${tabs.size} " + (if (privateMode) "privát lap" else "lap")
         }
+        updateGroupCapsule()
     }
 
     private fun restoreTabs() {
@@ -1818,6 +1820,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     tab.pendingUrl = tab.url
                     val savedId = o.optLong("id", 0L)
                     if (savedId != 0L) tab.id = savedId
+                    tab.group = o.optString("group", "")
                 }
             } catch (e: Exception) {
                 // sérült mentés: üres lappal indulunk
@@ -1845,6 +1848,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             }
             ThumbStore.prune(app, restored.map { it.id }.toSet())
         }.start()
+        restoreTabGroup()
     }
 
     private fun saveTabs() {
@@ -1856,6 +1860,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             o.put("id", t.id)
             o.put("url", t.webView.url ?: t.pendingUrl ?: t.url)
             o.put("title", t.title)
+            if (t.group.isNotEmpty()) o.put("group", t.group)
             arr.put(o)
         }
         prefs.edit()
@@ -2068,6 +2073,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         // (a halom elrendezés figyelője a húzás előtt kapja meg az érintést)
         setupStackLayout()
         setupSwipeToClose()
+        setupTabGroups()
 
         // görgetéskor az aktív lap üveg bezáró gombja a kártyával együtt mozog
         tabList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -5104,7 +5110,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         haptic()
         if (on) normalActive = activeTab else privateActive = activeTab
         privateMode = on
-        tabs = if (on) privateTabs else normalTabs
+        tabs = if (on) privateTabs else normalShown()
         updatePrivateUi(animateLabel = true)
         if (tabs.isEmpty()) {
             // első privát lap: egy új kezdőlap nyílik
@@ -5135,7 +5141,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private fun leavePrivate() {
         privateMode = false
         privateActive = null
-        tabs = normalTabs
+        tabs = normalShown()
         tabAdapter.notifyDataSetChanged()
         updatePrivateUi()
         val target = normalActive?.takeIf { it in tabs } ?: tabs.lastOrNull() ?: createTab().also {
@@ -5154,6 +5160,308 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         } catch (e: Throwable) {
             // még használatban van, vagy nem létezik
         }
+    }
+
+    // ---------------------------------------------------------------- lapcsoportok
+
+    /** A lapváltóban kiválasztott csoport ("" = minden lap); csak a normál lapokra vonatkozik. */
+    private var groupSel = ""
+    private var groupCapsule: TextView? = null
+    private var groupPopup: GlassPopup? = null
+
+    /** A normál lapok közül a látható rész: a kiválasztott csoport élő nézete, vagy mind. */
+    private fun normalShown(): MutableList<Tab> =
+        if (groupSel.isEmpty()) normalTabs else GroupTabList(normalTabs, groupSel)
+
+    /** Az összes ismert csoport: a mentett nevek és a lapokon szereplők. */
+    private fun allGroups(): List<String> {
+        val out = TabGroups.names(prefs)
+        for (t in normalTabs) if (t.group.isNotEmpty() && t.group !in out) out.add(t.group)
+        return out
+    }
+
+    /** Induláskor: a legutóbb kiválasztott csoport marad, ha az aktív lap abban van. */
+    private fun restoreTabGroup() {
+        val sel = TabGroups.selected(prefs)
+        if (sel.isNotEmpty() && !privateMode && activeTab?.group == sel) {
+            groupSel = sel
+            tabs = normalShown()
+        } else if (sel.isNotEmpty()) {
+            TabGroups.setSelected(prefs, "")
+        }
+        updateTabCount()
+    }
+
+    /** A lapváltó tetején a csoportválasztó üvegkapszula, és a kártyák hosszú nyomása. */
+    private fun setupTabGroups() {
+        val tv = TextView(this)
+        tv.textSize = 14.5f
+        tv.setTypeface(tv.typeface, android.graphics.Typeface.BOLD)
+        tv.gravity = Gravity.CENTER
+        tv.isSingleLine = true
+        tv.ellipsize = TextUtils.TruncateAt.END
+        tv.maxWidth = dp(240)
+        tv.setPadding(dp(16), 0, dp(12), 0)
+        tv.compoundDrawablePadding = dp(4)
+        // az üveg bőre az indulás végén (a glassBubble az üveg beállításait is újra alkalmazza)
+        handler.post { if (!isDestroyed) tv.background = glassBubble(dp(100).toFloat()) }
+        tv.contentDescription = L.t("Lapcsoportok")
+        tv.setOnClickListener { showGroupMenu() }
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
+        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        overview.addView(tv, lp)
+        groupCapsule = tv
+        // hosszú nyomás a kártyán: áthelyezés másik csoportba
+        tabList.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
+            override fun onChildViewAttachedToWindow(view: View) {
+                val card = view.findViewById<View>(R.id.tabCard) ?: return
+                card.setOnLongClickListener {
+                    val tab = tabs.getOrNull(tabList.getChildAdapterPosition(view))
+                    if (tab == null || tab.isPrivate || overviewBusy || !overviewShown) {
+                        return@setOnLongClickListener false
+                    }
+                    haptic()
+                    showMoveToGroup(tab, card)
+                    true
+                }
+            }
+
+            override fun onChildViewDetachedFromWindow(view: View) {}
+        })
+        layoutGroupCapsule(-1)
+        updateGroupCapsule()
+    }
+
+    /** A kapszula helye: a rács fölött (a rács ennyivel lejjebb kezdődik, lásd applyLayoutInsets). */
+    private fun layoutGroupCapsule(webTopY: Int) {
+        val tv = groupCapsule ?: return
+        val lp = tv.layoutParams as? FrameLayout.LayoutParams ?: return
+        val top = if (webTopY >= 0) webTopY + dp(12) else tabList.paddingTop - dp(GROUP_BAR_SPACE_DP - 2)
+        if (lp.topMargin != top) {
+            lp.topMargin = top
+            tv.layoutParams = lp
+        }
+    }
+
+    private fun updateGroupCapsule() {
+        val tv = groupCapsule ?: return
+        tv.visibility = if (privateMode) View.GONE else View.VISIBLE
+        tv.text = if (groupSel.isEmpty()) L.t("Minden lap") else groupSel
+        val col = menuTextColor()
+        tv.setTextColor(col)
+        val ic = ContextCompat.getDrawable(this, R.drawable.ic_chevron_down)?.mutate()
+        ic?.setBounds(0, 0, dp(18), dp(18))
+        ic?.setTint(col)
+        tv.setCompoundDrawablesRelative(null, null, ic, null)
+    }
+
+    /** Az új üveg felületek (felugró lista, olvasási lista, olvasó) közös eszközei. */
+    private fun glassUi(): GlassUi = GlassUi(
+        activity = this,
+        host = root,
+        dark = if (glassClear()) night else glassDark(),
+        makeGlass = { r -> glassBubble(r) },
+        releaseGlass = { d -> if (d is GlassSkinDrawable) skins.remove(d) },
+        haptic = { haptic() }
+    )
+
+    private fun newGlassPopup(): GlassPopup {
+        groupPopup?.dismissNow()
+        return GlassPopup(glassUi()).also { groupPopup = it }
+    }
+
+    /** A kapszulára koppintva: Minden lap, a csoportok, Új csoport…, Csoport törlése. */
+    private fun showGroupMenu() {
+        if (!overviewShown || overviewBusy || privateMode) return
+        val anchorView = groupCapsule ?: return
+        haptic()
+        val popup = newGlassPopup()
+        val anchor = rectOf(anchorView, root)
+        val items = ArrayList<GlassPopup.Item>()
+        items.add(GlassPopup.Item(L.t("Minden lap"), R.drawable.ic_m_reading_list, check = groupSel.isEmpty()) { switchGroup("") })
+        for (g in allGroups()) {
+            items.add(GlassPopup.Item(g, R.drawable.ic_m_folder, check = g == groupSel) { switchGroup(g) })
+        }
+        items.add(GlassPopup.Item(L.t("Új csoport…"), R.drawable.ic_m_add) {
+            askNewGroup(anchor) { name -> switchGroup(name) }
+        })
+        if (groupSel.isNotEmpty()) {
+            val sel = groupSel
+            items.add(GlassPopup.Item(L.t("Csoport törlése"), R.drawable.ic_m_delete, destructive = true) { deleteGroup(sel) })
+        }
+        popup.show(anchor, L.t("Lapcsoportok"), items)
+    }
+
+    /** Új csoport neve (üveg szövegmezővel); a [done] a létrehozott csoport nevét kapja. */
+    private fun askNewGroup(anchor: RectF, done: (String) -> Unit) {
+        val popup = newGlassPopup()
+        popup.showInput(anchor, L.t("Új csoport"), L.t("Csoport neve"), "", L.t("Létrehozás")) { raw ->
+            val name = TabGroups.add(prefs, raw)
+            if (name.isNotEmpty()) done(name)
+        }
+    }
+
+    /** Váltás egy másik csoportra (a lapváltóban a rács átúszik, mint a privát módnál). */
+    private fun switchGroup(name: String) {
+        if (privateMode || overviewBusy || name == groupSel) return
+        groupSel = name
+        TabGroups.setSelected(prefs, name)
+        tabs = normalShown()
+        // a rejtett csoportokban lévő lapok lemaradhattak a beállítások változásairól
+        tabs.forEach {
+            applyWebSettings(it.webView)
+            applyWebTop(it.webView)
+        }
+        updateTabCount()
+        if (tabs.isEmpty()) {
+            // üres csoport: egy új kezdőlap nyílik benne
+            val t = createTab()
+            t.url = homeUrl()
+            t.pendingUrl = t.url
+            tabAdapter.notifyDataSetChanged()
+            updateTabCount()
+            if (overviewShown) openTabFromOverview(t, notify = false) else selectTab(t)
+            saveTabs()
+            return
+        }
+        val target = activeTab?.takeIf { it in tabs } ?: tabs.last()
+        if (overviewShown) {
+            tabList.animate().cancel()
+            tabList.animate().alpha(0f).setDuration(130).withEndAction {
+                if (target !== activeTab) selectTab(target, animate = false)
+                tabAdapter.notifyDataSetChanged()
+                updateTabCount()
+                scrollTabListTo(tabs.indexOf(target).coerceAtLeast(0))
+                tabList.animate().alpha(1f).setDuration(200).start()
+            }.start()
+        } else if (target !== activeTab) {
+            selectTab(target)
+        }
+        saveTabs()
+    }
+
+    /** A csoport megszűnik; a lapjai megmaradnak, csak kikerülnek a csoportból. */
+    private fun deleteGroup(name: String) {
+        if (name.isEmpty() || privateMode || overviewBusy) return
+        haptic()
+        normalTabs.forEach { if (it.group == name) it.group = "" }
+        TabGroups.remove(prefs, name)
+        if (groupSel == name) {
+            switchGroup("")
+        } else {
+            tabAdapter.notifyDataSetChanged()
+            updateTabCount()
+            saveTabs()
+        }
+    }
+
+    /** Hosszú nyomás egy kártyán: a lap áthelyezése egy másik csoportba. */
+    private fun showMoveToGroup(tab: Tab, card: View) {
+        val popup = newGlassPopup()
+        val anchor = rectOf(card, root)
+        val items = ArrayList<GlassPopup.Item>()
+        items.add(GlassPopup.Item(L.t("Nincs csoport"), R.drawable.ic_m_reading_list, check = tab.group.isEmpty()) {
+            moveTabToGroup(tab, "")
+        })
+        for (g in allGroups()) {
+            items.add(GlassPopup.Item(g, R.drawable.ic_m_folder, check = tab.group == g) { moveTabToGroup(tab, g) })
+        }
+        items.add(GlassPopup.Item(L.t("Új csoport…"), R.drawable.ic_m_add) {
+            askNewGroup(anchor) { name -> moveTabToGroup(tab, name) }
+        })
+        popup.show(anchor, L.t("Áthelyezés csoportba"), items)
+    }
+
+    private fun moveTabToGroup(tab: Tab, name: String) {
+        if (tab.isPrivate || overviewBusy || tab.group == name || normalTabs.none { it === tab }) return
+        tab.group = name
+        if (groupSel.isNotEmpty() && name != groupSel) {
+            // a lap kikerült a látható csoportból
+            if (tabs.isEmpty()) {
+                val t = createTab()
+                t.url = homeUrl()
+                t.pendingUrl = t.url
+            }
+            if (tab === activeTab) selectTab(tabs.last(), animate = false)
+        }
+        tabAdapter.notifyDataSetChanged()
+        updateTabCount()
+        saveTabs()
+        if (overviewShown) updateLens()
+    }
+
+    // ---------------------------------------------------------------- olvasó nézet, olvasási lista
+
+    private var readerView: ReaderView? = null
+
+    /** Olvasó nézet: a cikk kinyerése az oldalból, és megjelenítése teljes képernyőn. */
+    private fun openReader() {
+        val tab = activeTab ?: return
+        if (readerView != null) return
+        val noReader = L.t("Ehhez az oldalhoz nem érhető el olvasó nézet")
+        if (Urls.isStart(tab.url)) {
+            showCopyToast(noReader, R.drawable.ic_m_reader, 2200L)
+            return
+        }
+        tab.webView.evaluateJavascript(Reader.EXTRACT_JS) { res ->
+            if (isFinishing || isDestroyed || tab !== activeTab || readerView != null) return@evaluateJavascript
+            val article = Reader.parse(res)
+            if (article == null) {
+                showCopyToast(noReader, R.drawable.ic_m_reader, 2200L)
+                return@evaluateJavascript
+            }
+            releaseFocus()
+            val rv = ReaderView(
+                glassUi(), prefs, statusTop, navBottom,
+                onOpenUrl = { url ->
+                    tab.stayInBrowser = true
+                    tab.webView.loadUrl(url)
+                },
+                onClosed = {
+                    readerView = null
+                    applyStatusColor()
+                }
+            )
+            readerView = rv
+            rv.open(article, tab.webView.url ?: tab.url)
+        }
+    }
+
+    /** Az aktuális oldal az olvasási listára kerül (a rövid leírása utólag érkezik). */
+    private fun addToReadingList() {
+        val tab = activeTab ?: return
+        val url = tab.webView.url ?: tab.url
+        if (Urls.isStart(url)) return
+        haptic()
+        val added = ReadingListStore.add(applicationContext, url, tab.title.ifBlank { Urls.host(url) })
+        showCopyToast(
+            if (added) L.t("Hozzáadva az olvasási listához") else L.t("Már az olvasási listán van"),
+            R.drawable.ic_m_reading_list
+        ) { showReadingList() }
+        if (added) {
+            tab.webView.evaluateJavascript(ReadingListStore.SNIPPET_JS) { res ->
+                val s = ReadingListStore.decodeJsString(res)
+                if (s.isNotBlank()) ReadingListStore.setSnippet(applicationContext, url, s)
+            }
+        }
+    }
+
+    private fun showReadingList() {
+        if (overviewShown || overviewBusy) return
+        releaseFocus()
+        ReadingListSheet(
+            glassUi(), statusTop, navBottom,
+            onOpen = { url ->
+                val t = activeTab
+                if (t != null) {
+                    t.stayInBrowser = true
+                    t.webView.loadUrl(url)
+                } else {
+                    openNewTab(url)
+                }
+            },
+            onOpenNewTab = { url -> openNewTab(url) }
+        ).show()
     }
 
     private var urlCopied = false
@@ -5238,6 +5546,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         menuRow(L.t("Letöltések"), icon = R.drawable.ic_m_download) {
             snapBackdrop { startActivity(Intent(this, DownloadsActivity::class.java)) }
         }
+        // olvasó nézet és olvasási lista (lásd Reader.kt, ReadingList.kt)
+        menuRow(L.t("Olvasó nézet"), canMark, icon = R.drawable.ic_m_reader) { openReader() }
+        menuRow(L.t("Hozzáadás az olvasási listához"), canMark, icon = R.drawable.ic_m_reading_add) { addToReadingList() }
+        menuRow(L.t("Olvasási lista"), icon = R.drawable.ic_m_reading_list) { showReadingList() }
         val desktop = prefs.getBoolean("desktop_mode", false)
         menuRow(L.t("Asztali oldal"), icon = R.drawable.ic_m_desktop, check = desktop) {
             prefs.edit().putBoolean("desktop_mode", !desktop).apply()
@@ -5923,7 +6235,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // not registered
         }
         handler.removeCallbacksAndMessages(null)
-        tabs.forEach {
+        (normalTabs + privateTabs).forEach {
             (it.webView.parent as? ViewGroup)?.removeView(it.webView)
             it.webView.destroy()
         }

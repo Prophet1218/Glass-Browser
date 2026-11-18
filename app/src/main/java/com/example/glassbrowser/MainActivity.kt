@@ -2518,8 +2518,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
         // görgetéskor az aktív lap üveg bezáró gombja a kártyával együtt mozog
         tabList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                // csak ha a felhasználó maga görgeti a rácsot (a programból indított igazítás nem)
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) endLiveCard(now = true)
+            }
+
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                if (dy != 0) endLiveCard(now = true)
                 if (overviewShown && !overviewBusy) updateLens()
             }
         })
@@ -3148,6 +3152,19 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private var liveAnim: ValueAnimator? = null
     private var liveWatch: Runnable? = null
 
+    /**
+     * A visszanyíló kártya képe pontosan az legyen, ahol az oldal most áll (a lapváltó alatt az
+     * oldal tovább görgethetett): különben előbb a régi kép, majd a valódi oldal látszana.
+     */
+    private fun refreshActiveThumb(target: Tab?) {
+        val t = target ?: return
+        if (t !== activeTab || !overviewShown) return
+        renderPage(t, 0.6f)?.let { bm ->
+            t.thumbnail = bm
+            cardView(t)?.findViewById<ImageView>(R.id.tabThumb)?.setImageBitmap(bm)
+        }
+    }
+
     /** Igaz, ha az oldal épp most is görög (lendületből). */
     private fun pageFlinging(tab: Tab): Boolean =
         tab === activeTab && android.os.SystemClock.uptimeMillis() - lastScrollAt < 90L
@@ -3303,6 +3320,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private fun hideOverview(target: Tab? = activeTab, zoom: Boolean = true) {
         endLiveCard(now = true)
         if (!overviewShown || overviewBusy) return
+        refreshActiveThumb(target)
         val tab = target ?: return
         overviewBusy = true
         hideGroupCapsule()
@@ -3360,6 +3378,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun openTabFromOverview(tab: Tab, notify: Boolean = true) {
         endLiveCard(now = true)
+        refreshActiveThumb(tab)
         if (!overviewShown) {
             selectTab(tab, animate = false)
             return

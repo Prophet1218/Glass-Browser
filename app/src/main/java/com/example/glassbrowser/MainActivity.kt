@@ -3779,8 +3779,28 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * Rugózó lenyomás: érintésre a felület kicsit összemegy, elengedéskor visszapattan.
      * Az üveg (a shader) együtt mozog vele.
      */
+    private val pressedBar = HashSet<View>()
+
     private fun pressBounce(v: View, down: Boolean) {
         if (down) haptic()
+        if (down) pressedBar.add(v) else pressedBar.remove(v)
+        if (!down) {
+            // biztonsági háló: ha egy másik animáció félbeszakította a visszaugrást, a kapszula
+            // ne maradjon elcsúszva / megnyúlva
+            handler.postDelayed({
+                if (v !in pressedBar && (v.translationX != 0f || v.translationY != 0f)) {
+                    v.animate().translationX(0f).translationY(0f).setDuration(220)
+                        .setInterpolator(DecelerateInterpolator()).setUpdateListener { updateLens() }.start()
+                }
+            }, 520L)
+        }
+        if (!down && !collapsed && !bounceOn) {
+            // rugózás nélkül is vissza kell állnia a nyúlásból
+            v.animate().cancel()
+            v.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setDuration(240)
+                .setInterpolator(DecelerateInterpolator()).setUpdateListener { updateLens() }.start()
+            return
+        }
         if (collapsed || !bounceOn) return
         v.pivotX = v.width / 2f
         v.pivotY = v.height / 2f
@@ -3953,6 +3973,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun fade(v: View, show: Boolean, animate: Boolean) {
         v.animate().cancel()
+        // (egy félbeszakadt beúszó animáció ne hagyja elcsúszva a feliratot)
+        v.translationY = 0f
         if (!animate) {
             v.alpha = if (show) 1f else 0f
             v.visibility = if (show) View.VISIBLE else View.INVISIBLE
@@ -5526,6 +5548,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private fun animateOverviewLabel() {
         val v = overviewLabel
         v.animate().cancel()
+        v.translationY = 0f
         v.animate().alpha(0f).translationY(-dp(10).toFloat()).setDuration(120)
             .setInterpolator(DecelerateInterpolator())
             .withEndAction {

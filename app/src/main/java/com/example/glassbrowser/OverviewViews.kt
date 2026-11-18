@@ -316,6 +316,19 @@ class GlowDrawable(private val density: Float) : android.graphics.drawable.Drawa
             }
             anim = a
             if (down) a.repeatCount = android.animation.ValueAnimator.INFINITE
+            // Elengedéskor a fény biztosan teljesen kialszik: ha a (rövidített) animáció véget ér,
+            // mielőtt a szint nullára csökkent, eddig egy halvány folt ott maradt ("mintha rajta
+            // tartanám az ujjam").
+            if (!down) {
+                a.addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        if (target == 0f) {
+                            level = 0f
+                            invalidateSelf()
+                        }
+                    }
+                })
+            }
             a.start()
         }
         if (!down && anim?.isRunning != true) invalidateSelf()

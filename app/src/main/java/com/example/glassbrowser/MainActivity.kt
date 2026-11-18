@@ -1361,7 +1361,15 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         syncStatusOverlay()
     }
 
+    private var swFlowFrom = 0f
+    private var swFlowTo = 0f
+
     private fun syncStatusOverlay() {
+        if (swipeTo != null && flowLayout()) {
+            val qf = swipeVisualP(swipeP)
+            flowAmt = swFlowFrom + (swFlowTo - swFlowFrom) * qf
+            flowTarget = if (qf >= 0.5f) swFlowTo else swFlowFrom
+        }
         val f = statusOverlay ?: return
         if (f.visibility != View.VISIBLE) return
         val q = swipeVisualP(swipeP)
@@ -7599,6 +7607,11 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         swIcons = to != null && (swOldColor != 0 || swNewColor != 0)
         if (to != null) {
             attachSwipeTarget(cur, to, dir, tabSwipeStyle())
+            // az állapotsor alatti elmosott sáv erőssége is a haladással vált a két lap között
+            flowAnim?.cancel()
+            flowAnim = null
+            swFlowFrom = flowAmt
+            swFlowTo = if (effScroll(to) > dp(2)) 1f else 0f
             prepareStatusOverlay(cur, to)
         }
         return to != null

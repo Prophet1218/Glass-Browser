@@ -180,6 +180,7 @@ object L {
         "kék" to "blue",
         "zöld" to "green",
         "rózsaszín" to "pink",
+        "szürke" to "gray",
         "lila" to "purple",
         "narancs" to "orange",
         "grafit" to "graphite",

@@ -52,7 +52,7 @@ object AppIcons {
     val styles get() = listOf("flat" to L.t("Sima"), "frost" to L.t("Matt üveg"), "liquid" to L.t("Folyékony üveg"))
     val colors get() = listOf(
         "blue" to L.t("kék"), "purple" to L.t("lila"), "green" to L.t("zöld"),
-        "orange" to L.t("narancs"), "pink" to L.t("rózsaszín"), "graphite" to L.t("grafit")
+        "orange" to L.t("narancs"), "pink" to L.t("szürke"), "graphite" to L.t("grafit")
     )
 
     private fun aliasName(key: String): String =

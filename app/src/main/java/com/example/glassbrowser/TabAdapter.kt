@@ -42,6 +42,9 @@ class TabAdapter(
         return holder
     }
 
+    /** A lap, amelynek kártyáján az üvegréteg viszi a keretet és az X-et. */
+    var decorTab: Tab? = null
+
     override fun getItemCount(): Int = tabsOf().size
 
     override fun onBindViewHolder(holder: VH, position: Int) {
@@ -76,6 +79,11 @@ class TabAdapter(
         val isActive = tab === activeTab()
         holder.close.alpha = if (isActive) ringAlpha() else 1f
         holder.card.alpha = if (tab === hiddenTab()) 0f else 1f
+        // az élő kártya kerete és X-e a ráhelyezett üvegrétegen van (lásd MainActivity.liveDecor)
+        if (tab === decorTab) {
+            holder.active.alpha = 0f
+            holder.close.alpha = 0f
+        }
 
         holder.card.setOnClickListener {
             val pos = holder.bindingAdapterPosition

@@ -3287,6 +3287,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             cardView(tab)?.findViewById<View>(R.id.tabClose)?.performClick()
         }
         decorTab = tab
+        tabAdapter.decorTab = tab
         decorRing = ring
         val clp = FrameLayout.LayoutParams(dp(28), dp(28))
         clp.gravity = Gravity.TOP or Gravity.END
@@ -3347,6 +3348,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             cardView(t)?.findViewById<View>(R.id.tabActive)?.alpha = ringAlpha
         }
         decorTab = null
+        tabAdapter.decorTab = null
         decorRing = null
         (liveCloseBtn?.background as? GlassSkinDrawable)?.let { skins.remove(it) }
         liveCloseBtn = null
@@ -3390,11 +3392,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // képből: ettől villant egy szellemkép a megálláskor)
             val cv = cardView(tab)
             val bm = tab.thumbnail
-            if (cv != null && bm != null) {
-                cv.findViewById<ImageView>(R.id.tabThumb)?.setImageBitmap(bm)
-            } else {
-                tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
-            }
+            if (cv != null && bm != null) cv.findViewById<ImageView>(R.id.tabThumb)?.setImageBitmap(bm)
             cv?.findViewById<View>(R.id.tabClose)?.alpha = 0f
             cv?.findViewById<View>(R.id.tabActive)?.alpha = 0f
             cv?.alpha = 1f

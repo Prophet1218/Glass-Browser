@@ -332,7 +332,35 @@ object L {
         "Elhalványulás oldalra" to "Fade to the side",
         "Kilökés felfelé" to "Toss up",
         "Összecsukódás" to "Fold away",
-        "Gyakran látogatott" to "Frequently visited"
+        "Gyakran látogatott" to "Frequently visited",
+        // olvasó nézet, olvasási lista, lapcsoportok
+        "Olvasó nézet" to "Reader view",
+        "Ehhez az oldalhoz nem érhető el olvasó nézet" to "Reader view isn't available for this page",
+        "Olvasó nézet bezárása" to "Close reader view",
+        "Kisebb betű" to "Smaller text",
+        "Nagyobb betű" to "Larger text",
+        "Szépia" to "Sepia",
+        "Talpas" to "Serif",
+        "Talpatlan" to "Sans",
+        "perc olvasás" to "min read",
+        "Hozzáadás az olvasási listához" to "Add to reading list",
+        "Hozzáadva az olvasási listához" to "Added to reading list",
+        "Már az olvasási listán van" to "Already in your reading list",
+        "Olvasási lista" to "Reading list",
+        "Az olvasási lista üres. A hárompontos menüben adhatsz hozzá oldalakat." to "Your reading list is empty. Add pages from the three-dot menu.",
+        "Bezárás" to "Close",
+        "Megnyitás új lapon" to "Open in new tab",
+        "Megjelölés olvasottként" to "Mark as read",
+        "Megjelölés olvasatlanként" to "Mark as unread",
+        "Lapcsoportok" to "Tab groups",
+        "Minden lap" to "All tabs",
+        "Nincs csoport" to "No group",
+        "Új csoport…" to "New group…",
+        "Új csoport" to "New group",
+        "Csoport neve" to "Group name",
+        "Létrehozás" to "Create",
+        "Csoport törlése" to "Delete group",
+        "Áthelyezés csoportba" to "Move to group"
     )
 
     private val HU: Map<String, String> = EN.entries.associate { (k, v) -> v to k }

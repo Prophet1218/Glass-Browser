@@ -37,6 +37,8 @@ class Tab(val webView: GlassWebView) {
     var noHeader: Boolean = false
     var hdrHits: Int = 0
     var maxScroll: Int = 0
+    /** A lapcsoport neve ("" = nincs csoportban). Csak a normál lapoknál használjuk. */
+    var group: String = ""
 }
 
 object Urls {

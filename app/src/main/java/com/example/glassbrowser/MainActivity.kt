@@ -3149,6 +3149,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     // ------------------------------------------------ lendületes görgetés a lapváltóba
 
     private var liveTab: Tab? = null
+    private var liveCardRect: RectF? = null
     private var liveAnim: ValueAnimator? = null
     private var liveWatch: Runnable? = null
 
@@ -3217,6 +3218,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         hero.visibility = View.GONE
         cardView(tab)?.alpha = 0f
         liveTab = tab
+        liveCardRect = RectF(card)
         // az élő oldal a lapváltó fölé kerül, amíg a kártya helyén görög
         contentContainer.translationZ = dp(40).toFloat()
         overview.alpha = 1f
@@ -3318,15 +3320,18 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * lap kártyája nagyít teljes képernyőre, különben a lapváltó egyszerűen elhalványul.
      */
     private fun hideOverview(target: Tab? = activeTab, zoom: Boolean = true) {
-        endLiveCard(now = true)
+        // a kártyában még élő (görgő) oldal maga nő vissza teljes képernyőre, ott, ahol épp tart
+        val liveClose = liveTab != null && liveTab === (target ?: activeTab) && liveCardRect != null &&
+            overviewShown && !overviewBusy
+        if (!liveClose) endLiveCard(now = true)
         if (!overviewShown || overviewBusy) return
-        refreshActiveThumb(target)
+        if (!liveClose) refreshActiveThumb(target)
         val tab = target ?: return
         overviewBusy = true
         hideGroupCapsule()
         tabList.scaleX = 1f
         tabList.scaleY = 1f
-        val card = if (zoom) cardRect(tab) else null
+        val card = if (zoom && !liveClose) cardRect(tab) else null
         if (tab !== activeTab) selectTab(tab, animate = false)
         // a kiválasztott lap legfrissebb képe repül vissza (ha más lapra váltottunk, annak a képe)
         snapshotFull = tab.thumbnail?.let { it.width * 1f / it.height < scene.width * 1f / maxOf(1, snapshotBottom() - webTop()) - 0.02f } ?: false
@@ -3349,6 +3354,27 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         } else {
             setBarMode(false, animate = true)
         }
+        if (liveClose) {
+            val rect = liveCardRect!!
+            liveTab = null
+            liveWatch = null
+            liveAnim?.cancel()
+            animateTitles(0f, 160)
+            val back = ValueAnimator.ofFloat(1f, 0f)
+            back.duration = 480L
+            back.interpolator = android.view.animation.PathInterpolator(0.3f, 0f, 0f, 1f)
+            back.addUpdateListener {
+                applyLiveTransform(rect, it.animatedValue as Float)
+                updateLens()
+            }
+            back.addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    resetLiveTransform()
+                    updateLens()
+                }
+            })
+            back.start()
+        }
         runOverview(false, tab, card) {
             overview.visibility = View.GONE
             groupCapsule?.visibility = View.GONE
@@ -3361,6 +3387,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             updateLens()
             syncUi()
         }
+        if (liveClose) cardView(tab)?.alpha = 0f
     }
 
     /**

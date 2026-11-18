@@ -111,6 +111,8 @@ object L {
         "Mégse" to "Cancel",
         "Törlés" to "Delete",
         "Másolás" to "Copy",
+        "Elmosás betöltés közben" to "Blur while loading",
+        "Amíg az oldal betölt, finoman elmosódik, utána kiélesedik." to "The page is softly blurred while it loads, then sharpens.",
         "Lapváltás animációja (sáv húzása)" to "Tab switch animation (bar swipe)",
         "Lapozás (mint egy könyv)" to "Page turn (like a book)",
         "Csúszás" to "Slide",

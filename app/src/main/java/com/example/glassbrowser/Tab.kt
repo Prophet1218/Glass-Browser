@@ -16,6 +16,8 @@ class Tab(val webView: GlassWebView) {
     var thumbnail: Bitmap? = null
     /** Az állapotsor mögötti rész átlagszíne, legutóbb mérve (lapváltó átmenethez). */
     var statusAvg: Int = 0
+    /** Az állapotsor mögötti sáv legutóbbi képe (kicsinyítve), lapozás közbeni áttűnéshez. */
+    var statusShot: Bitmap? = null
     var favicon: Bitmap? = null
     /** Igaz, amíg egy címsorból indított betöltés tart: ilyenkor nem dobjuk át más alkalmazásba. */
     var stayInBrowser: Boolean = false

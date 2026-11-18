@@ -324,6 +324,13 @@
             app:iconSpaceReserved="false"
             app:useSimpleSummaryProvider="true" />
 
+        <com.example.glassbrowser.GlassSwitchPreference
+            android:defaultValue="true"
+            android:key="load_blur"
+            android:summary="Amíg az oldal betölt, finoman elmosódik, utána kiélesedik."
+            android:title="Elmosás betöltés közben"
+            app:iconSpaceReserved="false" />
+
         <ListPreference
             android:defaultValue="fade"
             android:entries="@array/close_anim_names"

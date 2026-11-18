@@ -1245,6 +1245,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     /** Amíg a lap betölt, finoman elmosódik; amint megjelenik, lágyan kiélesedik. */
     private fun setLoadBlur(tab: Tab, on: Boolean) {
         if (Build.VERSION.SDK_INT < 31) return
+        if (on && !prefs.getBoolean("load_blur", true)) return
         val target = if (on) dp(16).toFloat() else 0f
         val cur = loadBlurR[tab] ?: 0f
         val running = loadBlurAnim[tab]
@@ -1278,6 +1279,111 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         a.start()
     }
 
+    // ---------------------------------------------------------------- állapotsor lapozás közben
+    // Minden lap megőrzi az állapotsor mögötti sáv legutóbbi képét. Lapozáskor a két kép
+    // áttűnik egymásba az állapotsor helyén, pontosan úgy, ahogy a két lap maga: így se
+    // villanás, se utólag ráúszó elmosás, se árnyék nincs (a végén a valódi sáv ugyanaz).
+
+    private var statusOverlay: FrameLayout? = null
+    private var statusOvA: ImageView? = null
+    private var statusOvB: ImageView? = null
+    private var statusShotBusy = false
+
+    private fun captureStatusShot(tab: Tab) {
+        if (statusShotBusy || statusTop <= 0 || scene.width <= 0 || capturing) return
+        val w = (scene.width / 4).coerceAtLeast(8)
+        val h = (statusTop / 4).coerceAtLeast(2)
+        val bm = tab.statusShot?.takeIf { !it.isRecycled && it.width == w && it.height == h }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        statusShotBusy = true
+        try {
+            PixelCopy.request(window, Rect(0, 0, scene.width, statusTop), bm, { r ->
+                statusShotBusy = false
+                if (r == PixelCopy.SUCCESS && tab === activeTab && !swipeBusy() && !overviewShown && !searchShown) {
+                    tab.statusShot = bm
+                }
+            }, handler)
+        } catch (e: Exception) {
+            statusShotBusy = false
+        }
+    }
+
+    /** A lap állapotsor-képe; ha nincs, de a lap a tetején van és ismert a színe, egyszínű. */
+    private fun statusShotOf(t: Tab): android.graphics.drawable.Drawable? {
+        t.statusShot?.takeIf { !it.isRecycled }?.let {
+            return android.graphics.drawable.BitmapDrawable(resources, it).apply { isFilterBitmap = true }
+        }
+        if (effScroll(t) < statusTop) {
+            val c = if (t.fixedHeader && t.headerColor != 0) t.headerColor else t.padColor
+            if (c != 0) return android.graphics.drawable.ColorDrawable(c)
+        }
+        return null
+    }
+
+    private fun ensureStatusOverlay(): FrameLayout {
+        statusOverlay?.let { return it }
+        val f = FrameLayout(this)
+        f.isClickable = false
+        f.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        val a = ImageView(this)
+        val b = ImageView(this)
+        a.scaleType = ImageView.ScaleType.FIT_XY
+        b.scaleType = ImageView.ScaleType.FIT_XY
+        f.addView(a, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        f.addView(b, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // közvetlenül a jelenet fölött (a sávok és felugró elemek alatt)
+        root.addView(f, root.indexOfChild(scene) + 1, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, statusTop))
+        f.visibility = View.GONE
+        statusOverlay = f
+        statusOvA = a
+        statusOvB = b
+        return f
+    }
+
+    private fun prepareStatusOverlay(from: Tab, to: Tab) {
+        if (!flowLayout() || statusTop <= 0) return
+        val f = ensureStatusOverlay()
+        val lp = f.layoutParams
+        if (lp.height != statusTop) {
+            lp.height = statusTop
+            f.layoutParams = lp
+        }
+        f.animate().cancel()
+        f.alpha = 1f
+        val da = statusShotOf(from)
+        val db = statusShotOf(to)
+        statusOvA?.setImageDrawable(da)
+        statusOvB?.setImageDrawable(db)
+        statusOvA?.visibility = if (da != null) View.VISIBLE else View.GONE
+        statusOvB?.visibility = if (db != null) View.VISIBLE else View.GONE
+        f.visibility = if (da != null || db != null) View.VISIBLE else View.GONE
+        syncStatusOverlay()
+    }
+
+    private fun syncStatusOverlay() {
+        val f = statusOverlay ?: return
+        if (f.visibility != View.VISIBLE) return
+        val q = swipeVisualP(swipeP)
+        val a = statusOvA
+        val b = statusOvB
+        val hasA = a?.visibility == View.VISIBLE
+        val hasB = b?.visibility == View.VISIBLE
+        if (hasA) a!!.alpha = if (hasB) 1f else 1f - q
+        if (hasB) b!!.alpha = q
+    }
+
+    private fun fadeStatusOverlay() {
+        val f = statusOverlay ?: return
+        if (f.visibility != View.VISIBLE) return
+        f.animate().cancel()
+        // egy képkocka múlva (amikor a valódi sáv már az új lapé), lágyan
+        f.animate().alpha(0f).setStartDelay(32L).setDuration(160L).withEndAction {
+            f.visibility = View.GONE
+            statusOvA?.setImageDrawable(null)
+            statusOvB?.setImageDrawable(null)
+        }.start()
+    }
+
     /** Lapváltás (sáv húzása) közben a képernyő két lap keveréke: ilyenkor nem mérünk színt. */
     private fun swipeBusy(): Boolean =
         swipeFrom != null || tabSwipeAnim?.isRunning == true || swActive
@@ -1308,6 +1414,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 val n = statusPixels.size
                 if (!overviewShown && !searchShown && !swipeBusy()) {
                     activeTab?.statusAvg = Color.rgb(rs / n, gs / n, bs / n)
+                    activeTab?.let { captureStatusShot(it) }
                 }
                 val lum = sum / statusPixels.size
                 val prev = statusBright
@@ -1325,7 +1432,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * görgetés közben sötét tartalom kerül mögé, világosak. Egyébként a világos / sötét mód szerint.
      */
     private fun syncStatusIcons() {
-        if (swActive) {
+        if (swIcons) {
             val c = swipeStatusColor()
             if (c != 0 && Color.alpha(c) > 128) {
                 val lightBg = ColorUtils.calculateLuminance(c) > 0.5
@@ -7255,6 +7362,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private var swipeTo: Tab? = null
     /** Állapotsor átmenet húzás / lapváltás közben. */
     private var swActive = false
+    /** Lapozás közben az ikonok a két lap állapotsorának keverékéhez igazodnak. */
+    private var swIcons = false
     private var swOldColor = 0
     private var swNewColor = 0
     private var turnShade: View? = null
@@ -7473,10 +7582,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         swipeFrom = cur
         swipeTo = to
         swipeDir = dir
-        swOldColor = statusColorOf(cur)
-        swNewColor = to?.let { statusColorOf(it) } ?: 0
-        swActive = to != null && (swOldColor != 0 || swNewColor != 0)
-        if (to != null) attachSwipeTarget(cur, to, dir, tabSwipeStyle())
+        swOldColor = cur.statusAvg.takeIf { it != 0 } ?: statusColorOf(cur)
+        swNewColor = to?.let { t -> t.statusAvg.takeIf { it != 0 } ?: statusColorOf(t) } ?: 0
+        swActive = false
+        swIcons = to != null && (swOldColor != 0 || swNewColor != 0)
+        if (to != null) {
+            attachSwipeTarget(cur, to, dir, tabSwipeStyle())
+            prepareStatusOverlay(cur, to)
+        }
         return to != null
     }
 
@@ -7494,6 +7607,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (has) {
             swipeP = (kotlin.math.abs(dx) / (w * 0.85f)).coerceIn(0f, 1f)
             tabSwipeFx(cur.webView, swipeTo?.webView, swipeP, dir, style)
+            syncStatusOverlay()
         } else {
             // a szélső lapnál csak gumiszerűen enged
             swipeP = (kotlin.math.abs(dx) / w * 0.12f).coerceIn(0f, 0.12f)
@@ -7520,6 +7634,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         a.addUpdateListener {
             swipeP = (it.animatedValue as Float).coerceIn(0f, 1f)
             tabSwipeFx(old, nw, swipeP, dir, style)
+            syncStatusOverlay()
             updateLens()
         }
         a.addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -7545,6 +7660,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         swipeDir = 0
         swipeP = 0f
         swActive = false
+        swIcons = false
     }
 
     /** Elengedés messzire: befejezi a lapváltást. */
@@ -7557,51 +7673,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         haptic()
         runSwipe(1f) {
-            val keepColor = swNewColor
             endSwipeState()
             selectTab(to, animate = false)
             // az állapotsor ikonjai a lap ismert színéből azonnal (nem várják meg a mérést)
-            val c = statusColorOf(to)
+            val c = to.statusAvg.takeIf { it != 0 } ?: statusColorOf(to)
             if (c != 0) statusBright = ColorUtils.calculateLuminance(c) > 0.5
-            if (keepColor != 0 && effScroll(to) >= statusTop) {
-                // legörgetett lap: a végszín lágyan átadja a helyét a valódi elmosásnak
-                swOldColor = keepColor
-                swNewColor = 0
-                swipeP = 0f
-                swActive = true
-                val token = ++swHoldToken
-                val fa = ValueAnimator.ofFloat(0f, 1f)
-                fa.duration = 260L
-                fa.addUpdateListener {
-                    if (token == swHoldToken && swipeFrom == null) {
-                        swipeP = (it.animatedValue as Float) / (if (tabSwipeStyle() == "blur") 1.2f else 1f)
-                        updateLens()
-                    }
-                }
-                fa.addListener(object : android.animation.AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: android.animation.Animator) {
-                        if (token == swHoldToken && swipeFrom == null) {
-                            swActive = false
-                            updateLens()
-                        }
-                    }
-                })
-                fa.start()
-            } else
-            // amíg az új lap állapotsorát meg nem méri, az átmenet végszíne marad (nincs villanás)
-            if (keepColor != 0 && to.padColor == 0 && !to.fixedHeader) {
-                swOldColor = keepColor
-                swNewColor = keepColor
-                swipeP = 1f
-                swActive = true
-                val token = ++swHoldToken
-                handler.postDelayed({
-                    if (token == swHoldToken && swipeFrom == null) {
-                        swActive = false
-                        updateLens()
-                    }
-                }, 450L)
-            }
+            // az átmenet végén a valódi állapotsor (az új lapé) ugyanaz, mint a képe: a kép lágyan eltűnik
+            fadeStatusOverlay()
             // az új lap állapotsora: a lap saját színével azonnal (a mérés később pontosít)
             updateLens()
         }
@@ -7616,6 +7694,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         runSwipe(0f) {
             val to = swipeTo
             endSwipeState()
+            fadeStatusOverlay()
             if (to != null && to !== activeTab) to.webView.visibility = View.GONE
             activeWebView?.bringToFront()
             updateLens()

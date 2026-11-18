@@ -50,5 +50,6 @@ jobs:
           tag_name: v${{ steps.ver.outputs.name }}
           name: Glass Browser ${{ steps.ver.outputs.name }}
           files: GlassBrowser-${{ steps.ver.outputs.name }}.apk
+          body_path: RELEASE_NOTES.md
           overwrite_files: true
           make_latest: true

@@ -1,5 +1,5 @@
 # Glass Browser 1.0
 
-Saját Android böngésző liquid glass felülettel.
+A personal Android browser with a Safari-inspired liquid glass interface, built on Chromium WebView.
 
-A legfrissebb APK a **Releases** részben tölthető le (minden feltöltés után a GitHub magától lefordítja).
+Download the latest APK from **Releases**. GitHub Actions builds a new APK after every push. The release notes list the features.

@@ -261,7 +261,11 @@ class PressLayout @JvmOverloads constructor(
                 onTouchMove?.invoke(ev.x, ev.y, false)
             }
         }
-        return super.dispatchTouchEvent(ev)
+        val handled = super.dispatchTouchEvent(ev)
+        // Ha az érintést senki nem fogadja el (pl. a lapváltóban a kapszula közepén nincs gomb),
+        // a rendszer a felengedést már nem küldené el: a fény és a benyomódás "beragadt".
+        // A kapszula ezért mindig átveszi az érintést, így az elengedés is biztosan megérkezik.
+        return if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN && (onPress != null || onTouchMove != null)) true else handled
     }
 }
 

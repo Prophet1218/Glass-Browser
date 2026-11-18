@@ -1028,13 +1028,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // a kereső felület fülei közötti kapszula sima üveg (fénytörés nélkül, hogy olvasható legyen)
             // fordítási buborék: ugyanaz az üveg, mint a keresősávé
             val tb = trBar
-            if (tb != null && tb.visibility == View.VISIBLE && tb.alpha > 0.02f && tb.width > 0) {
+            val gcOn = groupCapsule?.let { it.visibility == View.VISIBLE && it.alpha > 0.02f && it.width > 0 } == true
+            if (!gcOn && !overviewShown && tb != null && tb.visibility == View.VISIBLE && tb.alpha > 0.02f && tb.width > 0) {
                 visualRect(tb, tmpRect)
                 l.setSlot(
                     SLOT_SUGGEST, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
                     tmpRect.height() / 2f, lensBlur, tb.alpha
                 )
-            } else if (groupCapsule?.let { it.visibility == View.VISIBLE && it.alpha > 0.02f && it.width > 0 } == true) {
+            } else if (gcOn) {
                 // lapváltó: a lapcsoport kapszula üvege
                 val gc = groupCapsule!!
                 visualRect(gc, tmpRect)
@@ -1232,7 +1233,15 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private var statusProbeBusy = false
 
     /** Megméri, milyen világos az állapotsor mögötti rész (fehér fejlécnél sötét ikonok kellenek). */
+    /** Lapváltás (sáv húzása) közben a képernyő két lap keveréke: ilyenkor nem mérünk színt. */
+    private fun swipeBusy(): Boolean =
+        swipeFrom != null || tabSwipeAnim?.isRunning == true || swActive
+
     private fun probeStatusBand() {
+        if (swipeBusy()) {
+            handler.postDelayed({ probeStatusBand() }, 200L)
+            return
+        }
         if (statusProbeBusy || statusTop <= 0 || scene.width <= 0 || !flowLayout()) return
         statusProbeBusy = true
         try {
@@ -3139,6 +3148,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         handler.postDelayed({
             val wv = tab.webView
             if (tab !== activeTab || overviewShown || searchShown || capturing) return@postDelayed
+            if (swipeBusy()) {
+                probePadColor(tab, 250L)
+                return@postDelayed
+            }
             // van-e az oldal tetején rögzített fejléc (a térköz-szkript jegyzi meg)
             // Van-e az oldalnak rögzített fejléce, és most éppen látszik-e. Mint a Safariban: ha van
             // fejléc, az állapotsor tömören felveszi a színét, és az is marad (görgetéskor is).
@@ -3170,7 +3183,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (!flowLayout() || tab.fixedHeader || tab.noHeader || tab.padColor == 0) return
         val sc = effScroll(tab)
         tab.maxScroll = maxOf(tab.maxScroll, sc)
-        if (sc < dp(60) || overviewShown || searchShown || capturing) return
+        if (sc < dp(60) || overviewShown || searchShown || capturing || swipeBusy()) return
         probeRow(tab, header = false, consistency = true)
     }
 

@@ -2201,6 +2201,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     /** Lap bezárása (a lapváltó kártyájának × gombjával). */
     private fun closeTab(tab: Tab) {
+        endLiveCard(now = true)
         if (overviewBusy) return
         val idx = tabs.indexOf(tab)
         if (idx < 0) return
@@ -2518,6 +2519,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         // görgetéskor az aktív lap üveg bezáró gombja a kártyával együtt mozog
         tabList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dy != 0) endLiveCard(now = true)
                 if (overviewShown && !overviewBusy) updateLens()
             }
         })
@@ -3118,14 +3120,158 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // a rács elrendezése után tudjuk meg, hová kell a képnek zsugorodnia
             tabList.doOnPreDraw {
                 setTitlesHidden()
-                runOverview(true, tab, cardRect(tab)) {
-                    overviewBusy = false
-                    updateLens()
-                    fadeInRing()
-                    fadeInTitles()
+                val card = cardRect(tab)
+                // Ha az oldal épp lendületből görög, a valódi (élő) oldal zsugorodik a kártyába, és
+                // ott görög tovább, szépen lassulva; csak a megállás után cserélődik képre.
+                if (card != null && heroStartRect == null && !overviewViaCenter && pageFlinging(tab)) {
+                    runLiveOverview(tab, card) {
+                        overviewBusy = false
+                        updateLens()
+                        fadeInRing()
+                        fadeInTitles()
+                    }
+                } else {
+                    runOverview(true, tab, card) {
+                        overviewBusy = false
+                        updateLens()
+                        fadeInRing()
+                        fadeInTitles()
+                    }
                 }
             }
         }
+    }
+
+    // ------------------------------------------------ lendületes görgetés a lapváltóba
+
+    private var liveTab: Tab? = null
+    private var liveAnim: ValueAnimator? = null
+    private var liveWatch: Runnable? = null
+
+    /** Igaz, ha az oldal épp most is görög (lendületből). */
+    private fun pageFlinging(tab: Tab): Boolean =
+        tab === activeTab && android.os.SystemClock.uptimeMillis() - lastScrollAt < 90L
+
+    /** A tartalomtároló (benne az élő oldal) a [f] haladásnál a kártya felé zsugorítva. */
+    private fun applyLiveTransform(card: RectF, f: Float) {
+        val cc = contentContainer
+        val w = cc.width.toFloat().coerceAtLeast(1f)
+        val h = cc.height.toFloat().coerceAtLeast(1f)
+        val wv = activeWebView
+        val webTop = (wv?.top ?: 0).toFloat()
+        val s = card.width() / w
+        val sc = 1f + (s - 1f) * f
+        val tx = card.left * f
+        val ty = (card.top - webTop * s) * f
+        cc.pivotX = 0f
+        cc.pivotY = 0f
+        cc.scaleX = sc
+        cc.scaleY = sc
+        cc.translationX = tx
+        cc.translationY = ty
+        // a kártya a lap tetejét mutatja: alul levágva, lekerekítve
+        val clipH = h + ((webTop + card.height() / s) - h) * f
+        val clipTop = webTop * f
+        val rad = (screenRadius + (dp(22) - screenRadius) * f) / sc
+        val clip = android.graphics.Rect(0, clipTop.toInt(), w.toInt(), clipH.toInt().coerceAtLeast(clipTop.toInt() + 1))
+        cc.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                outline.setRoundRect(clip, rad)
+            }
+        }
+        cc.clipToOutline = true
+        cc.invalidateOutline()
+    }
+
+    private fun resetLiveTransform() {
+        val cc = contentContainer
+        cc.scaleX = 1f
+        cc.scaleY = 1f
+        cc.translationX = 0f
+        cc.translationY = 0f
+        cc.translationZ = 0f
+        cc.clipToOutline = false
+        cc.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+    }
+
+    private fun runLiveOverview(tab: Tab, card: RectF, onEnd: () -> Unit) {
+        overviewAnim?.cancel()
+        heroTab = null
+        hero.visibility = View.GONE
+        cardView(tab)?.alpha = 0f
+        liveTab = tab
+        // az élő oldal a lapváltó fölé kerül, amíg a kártya helyén görög
+        contentContainer.translationZ = dp(40).toFloat()
+        overview.alpha = 1f
+        tabList.alpha = 0f
+        tabList.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        val a = ValueAnimator.ofFloat(0f, 1f)
+        a.duration = 520L
+        a.interpolator = android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
+        a.addUpdateListener {
+            val f = it.animatedValue as Float
+            applyLiveTransform(card, f)
+            tabList.alpha = (f / 0.55f).coerceIn(0f, 1f)
+            updateLens()
+        }
+        a.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                tabList.setLayerType(View.LAYER_TYPE_NONE, null)
+                if (liveAnim !== a) return
+                liveAnim = null
+                onEnd()
+                watchLiveCard()
+            }
+        })
+        liveAnim = a
+        a.start()
+    }
+
+    /** Megvárja, amíg a kártyában görgő oldal megáll, aztán képre cseréli. */
+    private fun watchLiveCard() {
+        val tab = liveTab ?: return
+        val wv = tab.webView
+        var lastY = wv.scrollY
+        var stillSince = android.os.SystemClock.uptimeMillis()
+        val r = object : Runnable {
+            override fun run() {
+                if (liveTab !== tab || liveWatch !== this) return
+                val y = wv.scrollY
+                val now = android.os.SystemClock.uptimeMillis()
+                if (y != lastY) {
+                    lastY = y
+                    stillSince = now
+                }
+                if (now - stillSince > 160L) endLiveCard(now = false) else root.postOnAnimation(this)
+            }
+        }
+        liveWatch = r
+        root.postOnAnimation(r)
+    }
+
+    /**
+     * Vége az élő kártyának: a kártya a megállt oldal friss képét kapja, az oldal visszakerül a
+     * lapváltó alá. [now]: azonnal (pl. koppintás / görgetés a rácsban), különben lágyan.
+     */
+    private fun endLiveCard(now: Boolean) {
+        val tab = liveTab ?: return
+        liveTab = null
+        liveWatch = null
+        liveAnim?.cancel()
+        liveAnim = null
+        val finish = {
+            tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
+            cardView(tab)?.alpha = 1f
+            // egy képkocka múlva (amikor a kártya már a friss képet mutatja) kerül vissza az oldal
+            root.postOnAnimation {
+                if (liveTab == null) resetLiveTransform()
+                updateLens()
+            }
+        }
+        // (a képernyőről most nem olvasható ki: az oldal a kártyában, kicsinyítve látszik)
+        renderPage(tab, 0.6f)?.let { tab.thumbnail = it }
+        if (now) tabList.alpha = 1f
+        finish()
     }
 
     /** A kijelölt lap fehér kerete a megnyitás végén fokozatosan jelenik meg. */
@@ -3155,6 +3301,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * lap kártyája nagyít teljes képernyőre, különben a lapváltó egyszerűen elhalványul.
      */
     private fun hideOverview(target: Tab? = activeTab, zoom: Boolean = true) {
+        endLiveCard(now = true)
         if (!overviewShown || overviewBusy) return
         val tab = target ?: return
         overviewBusy = true
@@ -3212,6 +3359,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     private fun openTabFromOverview(tab: Tab, notify: Boolean = true) {
+        endLiveCard(now = true)
         if (!overviewShown) {
             selectTab(tab, animate = false)
             return

@@ -12,7 +12,7 @@
 
 ### Browsing
 - **Swipe tabs on the bar.** Swipe the center capsule sideways to switch tabs. The whole transition follows your finger, including the status bar.
-- **Tab switcher.** Grid overview, swipe to close, tab groups and a private mode with a separate storage profile.
+- **Tab switcher.** A page that is still scrolling keeps scrolling inside its card and slows down naturally. Grid overview, swipe to close, tab groups and a private mode with a separate storage profile.
 - **Search panel.** Results, bookmarks and history tabs (swipe between them), suggestions with site icons, and long-press to copy or delete an entry.
 - **Find on page, text size per site, and a long-press menu for links and images.** The menu offers open in new tab, copy, share and save image.
 - **In-place page translation** with an animated glass pill.

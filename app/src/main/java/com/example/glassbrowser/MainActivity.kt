@@ -1097,7 +1097,16 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             }
             // "Vágólapra másolva" kapszula (vagy a kereső sorainak hosszú nyomásra megjelenő kapszulája)
             val ct = (rowActions ?: rowActionsFading)?.takeIf { it.visibility == View.VISIBLE && it.alpha > 0.02f } ?: copyToast
-            if (ct != null && ct.visibility == View.VISIBLE && ct.alpha > 0.02f && ct.width > 0 &&
+            val lc = liveCloseBtn
+            val ld = liveDecor
+            if (lc != null && ld != null && ld.alpha > 0.02f && lc.width > 0) {
+                // a kártyában görgő élő oldal bezáró gombja: valódi üveg a görgő tartalom fölött
+                visualRect(lc, tmpRect)
+                l.setSlot(
+                    SLOT_SPARE, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
+                    tmpRect.height() / 2f, lensBlur * 0.6f, ld.alpha
+                )
+            } else if (ct != null && ct.visibility == View.VISIBLE && ct.alpha > 0.02f && ct.width > 0 &&
                 pullIndicator.alpha <= 0.02f
             ) {
                 visualRect(ct, tmpRect)
@@ -3266,9 +3275,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         close.scaleType = ImageView.ScaleType.FIT_CENTER
         close.setPadding(dp(7), dp(7), dp(7), dp(7))
         close.contentDescription = L.t("Bezárás")
-        val glass = GlassCloseDrawable(close)
-        glass.setThumbnail(tab.thumbnail)
-        close.background = glass
+        // valódi folyékony üveg: alatta a lencse a görgő oldalt töri meg valós időben (SLOT_SPARE),
+        // a gombon csak az üveg pereme / bőre van
+        close.background = glassBubble(dp(14).toFloat())
+        liveCloseBtn = close
         close.setOnClickListener {
             // a valódi kártya bezáró gombja (ugyanaz az animáció)
             endLiveCard(now = true)
@@ -3284,13 +3294,19 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         lp.topMargin = card.top.toInt()
         root.addView(d, root.indexOfChild(scene) + 1, lp)
         d.alpha = 0f
-        d.animate().alpha(1f).setDuration(380).setInterpolator(DecelerateInterpolator()).start()
         liveDecor = d
+        d.animate().alpha(1f).setDuration(380).setInterpolator(DecelerateInterpolator())
+            .setUpdateListener { updateLens() }.withEndAction { updateLens() }.start()
     }
+
+    private var liveCloseBtn: View? = null
 
     private fun removeLiveDecor() {
         liveDecor?.let { it.animate().cancel(); root.removeView(it) }
         liveDecor = null
+        (liveCloseBtn?.background as? GlassSkinDrawable)?.let { skins.remove(it) }
+        liveCloseBtn = null
+        updateLens()
     }
 
     /** Megvárja, amíg a kártyában görgő oldal megáll, aztán képre cseréli. */
@@ -3414,7 +3430,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             val rect = liveCardRect!!
             liveTab = null
             liveWatch = null
-            liveDecor?.let { d -> d.animate().alpha(0f).setDuration(120).withEndAction { removeLiveDecor() }.start() }
+            liveDecor?.let { d -> d.animate().alpha(0f).setDuration(120).setUpdateListener { updateLens() }.withEndAction { removeLiveDecor() }.start() }
             liveAnim?.cancel()
             animateTitles(0f, 160)
             val back = ValueAnimator.ofFloat(1f, 0f)

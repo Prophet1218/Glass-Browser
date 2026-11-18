@@ -324,6 +324,9 @@ class MainActivity : AppCompatActivity() {
                 val wv = activeWebView
                 val tab = activeTab
                 when {
+                    fullscreenView != null -> exitFullscreen()
+                    pagePopup != null -> hidePagePopup()
+                    topTool != null -> hideTopTool()
                     rowActions != null -> hideRowActions()
                     menuVisible -> hideMenu()
                     overviewShown -> hideOverview()
@@ -335,6 +338,8 @@ class MainActivity : AppCompatActivity() {
                         isEnabled = true
                     }
                     wv != null && wv.canGoBack() -> wv.goBack()
+                    // a felugró ablakból / linkből nyílt lap: vissza az eredeti lapra (mint a Safariban)
+                    tab != null && openers[tab]?.let { it in tabs } == true -> closePopupTab(tab)
                     // no more history in this tab (e.g. restored tab, link opened in a new tab):
                     // one step back is the start page; only from there does back leave the app
                     wv != null && tab != null -> {
@@ -361,6 +366,20 @@ class MainActivity : AppCompatActivity() {
 
     /** Érintéskor fény a sáv részein: az ujj alatt világít, és követi az ujjat (mint az iOS-en). */
     private fun setupGlow() {
+        // a középső kapszulát oldalra húzva lapot vált (mint a Safariban)
+        (barCenter as? PressLayout)?.let { pl ->
+            pl.onSwipeMove = { dx -> if (!barOverview && !overviewShown) swipeTabFollow(dx) }
+            pl.onSwipe = { dx, commit ->
+                if (barOverview || overviewShown) {
+                    activeWebView?.translationX = 0f
+                } else if (!commit) {
+                    activeWebView?.animate()?.translationX(0f)?.setDuration(380)
+                        ?.setInterpolator(OvershootInterpolator(2f))?.start()
+                } else {
+                    swipeToTab(if (dx < 0f) 1 else -1)
+                }
+            }
+        }
         for (v in listOf<FrameLayout>(barLeft, barCenter, barRight)) {
             val glow = GlowDrawable(resources.displayMetrics.density)
             v.foreground = glow
@@ -1323,6 +1342,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             userAgentString = if (desktop) desktopUa() else mobileChromeUa()
             // gyorsabb, akadásmentes görgetés: a látható részen kívüli csempéket is előre kirajzolja
             offscreenPreRaster = true
+            // window.open / target=_blank: onCreateWindow kezeli (új lap), csak felhasználói
+            // érintésre (a kéretlen felugró ablakok tiltva maradnak)
+            setSupportMultipleWindows(true)
+            javaScriptCanOpenWindowsAutomatically = true
+            setGeolocationEnabled(true)
+            mediaPlaybackRequiresUserGesture = true
         }
         // az aktív lap renderelője kapja a legnagyobb prioritást
         wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
@@ -1430,7 +1455,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         wv.addJavascriptInterface(ScrollBridge(tab), "GlassScroll")
         // A kezdőlapon a hosszú nyomás csak a csempe szerkesztőjét nyitja meg: a WebView saját
         // reakciója (a link "kiemelése", húzása, szövegkijelölés) itt ki van kapcsolva.
-        wv.setOnLongClickListener { Urls.isStart(wv.url.orEmpty()) }
+        wv.setOnLongClickListener { Urls.isStart(wv.url.orEmpty()) || onPageLongPress(tab) }
+        wv.setOnTouchListener { _, ev ->
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                lastPageTouchX = ev.rawX
+                lastPageTouchY = ev.rawY
+            }
+            false
+        }
         // letöltések: a rendszer letöltéskezelője tölti le a Letöltések mappába
         wv.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
             val ok = Downloads.start(applicationContext, url, userAgent, contentDisposition, mimetype)
@@ -1505,6 +1537,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tab.loading = true
                 tab.progress = 5
                 if (url != null) tab.url = url
+                applyTextZoom(wv, url)
                 wv.appliedPadJs = null
                 wv.resetInset()
                 tab.padColor = 0
@@ -1579,6 +1612,46 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
                 tab.favicon = icon
                 if (overviewShown) tabAdapter.notifyDataSetChanged()
+            }
+
+            // fájlfeltöltés (<input type=file>)
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: android.webkit.ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean = openFileChooser(filePathCallback, fileChooserParams)
+
+            // teljes képernyős videó
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (view != null && callback != null) enterFullscreen(view, callback) else callback?.onCustomViewHidden()
+            }
+
+            override fun onHideCustomView() = exitFullscreen()
+
+            // kamera / mikrofon / védett tartalom (DRM)
+            override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+                if (request != null) handleWebPermission(request)
+            }
+
+            override fun onPermissionRequestCanceled(request: android.webkit.PermissionRequest?) {
+                if (pendingWebPermission === request) pendingWebPermission = null
+            }
+
+            // helymeghatározás
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: android.webkit.GeolocationPermissions.Callback?
+            ) {
+                if (origin != null && callback != null) handleGeoPermission(origin, callback)
+            }
+
+            // felugró ablak (window.open, target=_blank): új lapon nyílik, mint a Safariban
+            override fun onCreateWindow(
+                view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?
+            ): Boolean = openPopupTab(tab, isUserGesture, resultMsg)
+
+            override fun onCloseWindow(window: WebView?) {
+                tabs.firstOrNull { it.webView === window }?.let { closePopupTab(it) }
             }
         }
 
@@ -5243,6 +5316,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             prefs.edit().putBoolean("desktop_mode", !desktop).apply()
             applyAllSettings()
         }
+        menuRow(L.t("Keresés az oldalon"), icon = R.drawable.ic_m_find) { showFindBar() }
+        menuRow(L.t("Szövegméret"), icon = R.drawable.ic_m_textsize) { showTextSizeBar() }
+        menuRow(L.t("Megosztás"), icon = R.drawable.ic_m_share) { sharePage() }
         menuRow(L.t("Beállítások"), icon = R.drawable.ic_m_settings) { openSettings() }
         // Olvashatóság: az üveg alá enyhe dér kerül, a szöveg a világos / sötét módhoz igazodik
         // (így világos és sötét oldal fölött is mindig látszik).
@@ -5928,6 +6004,650 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             it.webView.destroy()
         }
         super.onDestroy()
+    }
+
+    // ================================================================ webes alapfunkciók
+
+    // ---------------------------------------------------------------- fájlfeltöltés
+
+    private var fileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
+    private val fileLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            val cb = fileCallback
+            fileCallback = null
+            if (cb == null) return@registerForActivityResult
+            val data = res.data
+            val uris = ArrayList<Uri>()
+            if (res.resultCode == RESULT_OK && data != null) {
+                val clip = data.clipData
+                if (clip != null) {
+                    for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris.add(it) }
+                } else {
+                    data.data?.let { uris.add(it) }
+                }
+            }
+            cb.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+        }
+
+    private fun openFileChooser(
+        cb: android.webkit.ValueCallback<Array<Uri>>?,
+        params: WebChromeClient.FileChooserParams?
+    ): Boolean {
+        if (cb == null) return false
+        fileCallback?.onReceiveValue(null)
+        fileCallback = cb
+        return try {
+            val pick = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).setType("*/*")
+            pick.addCategory(Intent.CATEGORY_OPENABLE)
+            if (params?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+            fileLauncher.launch(Intent.createChooser(pick, params?.title ?: L.t("Fájl kiválasztása")))
+            true
+        } catch (e: Exception) {
+            fileCallback = null
+            cb.onReceiveValue(null)
+            false
+        }
+    }
+
+    // ---------------------------------------------------------------- teljes képernyős videó
+
+    private var fullscreenView: View? = null
+    private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+
+    private fun enterFullscreen(view: View, callback: WebChromeClient.CustomViewCallback) {
+        if (fullscreenView != null) {
+            callback.onCustomViewHidden()
+            return
+        }
+        releaseFocus()
+        val box = FrameLayout(this)
+        box.setBackgroundColor(Color.BLACK)
+        box.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        box.alpha = 0f
+        box.animate().alpha(1f).setDuration(220).start()
+        fullscreenView = box
+        fullscreenCallback = callback
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        WindowCompat.getInsetsController(window, box).apply {
+            systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun exitFullscreen() {
+        val box = fullscreenView ?: return
+        fullscreenView = null
+        val cb = fullscreenCallback
+        fullscreenCallback = null
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        WindowCompat.getInsetsController(window, root).show(WindowInsetsCompat.Type.systemBars())
+        box.animate().alpha(0f).setDuration(180).withEndAction {
+            box.removeAllViews()
+            root.removeView(box)
+        }.start()
+        try {
+            cb?.onCustomViewHidden()
+        } catch (e: Exception) {
+            // a lejátszó már bezárult
+        }
+        updateLens()
+    }
+
+    // ---------------------------------------------------------------- engedélyek
+
+    private var pendingWebPermission: android.webkit.PermissionRequest? = null
+    private var pendingGeo: Pair<String, android.webkit.GeolocationPermissions.Callback>? = null
+    private var pendingPermResult: ((Boolean) -> Unit)? = null
+    /** Erre a futásra megadott / elutasított webes engedélyek (oldal + erőforrás). */
+    private val sitePermissions = HashMap<String, Boolean>()
+
+    private val permLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+            val cb = pendingPermResult
+            pendingPermResult = null
+            cb?.invoke(res.isNotEmpty() && res.values.all { it })
+        }
+
+    private fun ensureAndroidPermissions(perms: Array<String>, done: (Boolean) -> Unit) {
+        val missing = perms.filter {
+            ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            done(true)
+            return
+        }
+        pendingPermResult = done
+        try {
+            permLauncher.launch(missing.toTypedArray())
+        } catch (e: Exception) {
+            pendingPermResult = null
+            done(false)
+        }
+    }
+
+    /** A Safarihoz hasonló kérdés: „<oldal> szeretné használni a kamerát”. */
+    private fun askSite(host: String, what: String, done: (Boolean) -> Unit) {
+        val key = "$host|$what"
+        sitePermissions[key]?.let {
+            done(it)
+            return
+        }
+        var answered = false
+        val d = androidx.appcompat.app.AlertDialog.Builder(this, R.style.GlassDialog)
+            .setTitle(host)
+            .setMessage(L.t("Ez az oldal szeretné használni:") + " " + what)
+            .setPositiveButton(L.t("Engedélyezés")) { _, _ ->
+                answered = true
+                sitePermissions[key] = true
+                done(true)
+            }
+            .setNegativeButton(L.t("Tiltás")) { _, _ ->
+                answered = true
+                sitePermissions[key] = false
+                done(false)
+            }
+            .create()
+        d.setOnDismissListener { if (!answered) done(false) }
+        d.show()
+    }
+
+    private fun handleWebPermission(req: android.webkit.PermissionRequest) {
+        val res = req.resources ?: emptyArray()
+        val grant = ArrayList<String>()
+        val need = ArrayList<String>()
+        val labels = ArrayList<String>()
+        for (r in res) {
+            when (r) {
+                android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID -> grant.add(r)
+                android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> {
+                    need.add(android.Manifest.permission.CAMERA)
+                    labels.add(L.t("kamera"))
+                }
+                android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE -> {
+                    need.add(android.Manifest.permission.RECORD_AUDIO)
+                    labels.add(L.t("mikrofon"))
+                }
+            }
+        }
+        if (need.isEmpty()) {
+            if (grant.isEmpty()) req.deny() else req.grant(grant.toTypedArray())
+            return
+        }
+        val host = req.origin?.host ?: ""
+        pendingWebPermission = req
+        askSite(host, labels.joinToString(", ")) { ok ->
+            if (pendingWebPermission !== req) return@askSite
+            if (!ok) {
+                pendingWebPermission = null
+                if (grant.isEmpty()) req.deny() else req.grant(grant.toTypedArray())
+                return@askSite
+            }
+            ensureAndroidPermissions(need.toTypedArray()) { granted ->
+                if (pendingWebPermission !== req) return@ensureAndroidPermissions
+                pendingWebPermission = null
+                if (granted) {
+                    val all = res.filter {
+                        it == android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+                            it == android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
+                            it == android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID
+                    }
+                    req.grant(all.toTypedArray())
+                } else if (grant.isEmpty()) {
+                    req.deny()
+                } else {
+                    req.grant(grant.toTypedArray())
+                }
+            }
+        }
+    }
+
+    private fun handleGeoPermission(origin: String, cb: android.webkit.GeolocationPermissions.Callback) {
+        val host = Uri.parse(origin).host ?: origin
+        pendingGeo = origin to cb
+        askSite(host, L.t("helyadatok")) { ok ->
+            if (!ok) {
+                cb.invoke(origin, false, false)
+                return@askSite
+            }
+            ensureAndroidPermissions(
+                arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+            ) { granted -> cb.invoke(origin, granted, false) }
+        }
+    }
+
+    // ---------------------------------------------------------------- felugró ablakok
+
+    /** Melyik lapból nyílt a lap (felugró ablak / target=_blank): vissza gesztussal oda tér vissza. */
+    private val openers = HashMap<Tab, Tab>()
+
+    private fun openPopupTab(opener: Tab, isUserGesture: Boolean, msg: android.os.Message?): Boolean {
+        if (msg == null || !isUserGesture || overviewBusy) return false
+        val transport = msg.obj as? WebView.WebViewTransport ?: return false
+        val t = createTab()
+        t.isPrivate = opener.isPrivate
+        t.url = ""
+        transport.webView = t.webView
+        msg.sendToTarget()
+        openers[t] = opener
+        if (overviewShown) {
+            openTabFromOverview(t)
+        } else {
+            captureThumbnail(opener) { selectTab(t) }
+        }
+        return true
+    }
+
+    private fun closePopupTab(tab: Tab) {
+        val opener = openers.remove(tab)
+        if (tab !in tabs) return
+        closeTab(tab)
+        if (opener != null && opener in tabs && opener !== activeTab) selectTab(opener)
+    }
+
+    // ---------------------------------------------------------------- hosszú nyomás a weboldalon
+
+    private var lastPageTouchX = 0f
+    private var lastPageTouchY = 0f
+    private var pagePopup: LinearLayout? = null
+    private var pagePopupCatcher: View? = null
+
+    /** Link / kép hosszú nyomására üveg menü (mint a Safariban). Igaz, ha megjelent. */
+    private fun onPageLongPress(tab: Tab): Boolean {
+        val wv = tab.webView
+        val hr = wv.hitTestResult
+        val type = hr.type
+        val extra = hr.extra ?: return false
+        return when (type) {
+            WebView.HitTestResult.SRC_ANCHOR_TYPE -> {
+                showLinkPopup(extra, null)
+                true
+            }
+            WebView.HitTestResult.IMAGE_TYPE -> {
+                showLinkPopup(null, extra)
+                true
+            }
+            WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+                // a kép mögötti link címét külön kell elkérni
+                val h = android.os.Handler(mainLooper) { m ->
+                    val href = m.data?.getString("url")
+                    showLinkPopup(href?.takeIf { it.isNotBlank() }, extra)
+                    true
+                }
+                wv.requestFocusNodeHref(h.obtainMessage())
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun showLinkPopup(link: String?, image: String?) {
+        haptic()
+        val items = ArrayList<Triple<Int, String, () -> Unit>>()
+        if (link != null) {
+            items.add(Triple(R.drawable.ic_m_add, L.t("Megnyitás új lapon")) { openNewTab(link) })
+            items.add(Triple(R.drawable.ic_m_copy, L.t("Link másolása")) {
+                copyText(link)
+                showCopyToast()
+            })
+            items.add(Triple(R.drawable.ic_m_share, L.t("Megosztás")) { shareText(link) })
+        }
+        if (image != null && (image.startsWith("http://") || image.startsWith("https://"))) {
+            items.add(Triple(R.drawable.ic_m_add, L.t("Kép megnyitása új lapon")) { openNewTab(image) })
+            items.add(Triple(R.drawable.ic_m_download, L.t("Kép mentése")) {
+                val ok = Downloads.start(applicationContext, image, activeWebView?.settings?.userAgentString, null, null)
+                showCopyToast(if (ok) L.t("Letöltés elindult") else L.t("Ez a letöltés nem támogatott"))
+            })
+            items.add(Triple(R.drawable.ic_m_copy, L.t("Kép címének másolása")) {
+                copyText(image)
+                showCopyToast()
+            })
+        }
+        if (items.isEmpty()) return
+        showPagePopup(link ?: image ?: "", items)
+    }
+
+    private fun copyText(t: String) {
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        cm?.setPrimaryClip(android.content.ClipData.newPlainText("URL", t))
+    }
+
+    private fun showPagePopup(header: String, items: List<Triple<Int, String, () -> Unit>>) {
+        hidePagePopup(immediate = true)
+        val col = menuTextColor()
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.background = glassBubble(dp(24).toFloat())
+        box.setPadding(0, dp(6), 0, dp(6))
+        val head = TextView(this)
+        head.text = header
+        head.textSize = 12.5f
+        head.maxLines = 2
+        head.ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        head.setTextColor(ColorUtils.setAlphaComponent(col, 150))
+        head.setPadding(dp(18), dp(8), dp(18), dp(8))
+        box.addView(head)
+        val sep = View(this)
+        sep.setBackgroundColor(ColorUtils.setAlphaComponent(col, 40))
+        box.addView(sep, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+        for ((icon, label, act) in items) {
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 16f
+            t.setTextColor(col)
+            t.gravity = Gravity.CENTER_VERTICAL
+            t.setPadding(dp(18), dp(12), dp(22), dp(12))
+            t.compoundDrawablePadding = dp(14)
+            val ic = ContextCompat.getDrawable(this, icon)?.mutate()
+            ic?.setBounds(0, 0, dp(20), dp(20))
+            t.setCompoundDrawablesRelative(ic, null, null, null)
+            t.compoundDrawableTintList = ColorStateList.valueOf(col)
+            val ta = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+            t.background = ta.getDrawable(0)
+            ta.recycle()
+            t.setOnClickListener {
+                hidePagePopup()
+                act()
+            }
+            box.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val catcher = View(this)
+        catcher.setBackgroundColor(Color.argb(40, 0, 0, 0))
+        catcher.setOnTouchListener { _, ev ->
+            if (ev.actionMasked == MotionEvent.ACTION_DOWN) hidePagePopup()
+            true
+        }
+        catcher.alpha = 0f
+        catcher.animate().alpha(1f).setDuration(200).start()
+        root.addView(catcher, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val w = (root.width * 0.78f).toInt().coerceAtMost(dp(320))
+        val lp = FrameLayout.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.gravity = Gravity.TOP or Gravity.START
+        root.addView(box, lp)
+        box.measure(
+            View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.AT_MOST)
+        )
+        val loc = IntArray(2)
+        root.getLocationOnScreen(loc)
+        val tx = lastPageTouchX - loc[0]
+        val ty = lastPageTouchY - loc[1]
+        val h = box.measuredHeight
+        val x = (tx - w / 2f).coerceIn(dp(12).toFloat(), (root.width - w - dp(12)).toFloat())
+        var y = ty - h - dp(16)
+        if (y < statusTop + dp(8)) y = ty + dp(16)
+        y = y.coerceIn((statusTop + dp(8)).toFloat(), (root.height - h - dp(12)).toFloat().coerceAtLeast(0f))
+        box.translationX = x
+        box.translationY = y
+        // az ujj helyéről nő ki
+        box.pivotX = (tx - x).coerceIn(0f, w.toFloat())
+        box.pivotY = (ty - y).coerceIn(0f, h.toFloat())
+        box.alpha = 0f
+        box.scaleX = 0.5f
+        box.scaleY = 0.5f
+        box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(360)
+            .setInterpolator(OvershootInterpolator(1.4f)).start()
+        pagePopup = box
+        pagePopupCatcher = catcher
+    }
+
+    private fun hidePagePopup(immediate: Boolean = false) {
+        val box = pagePopup ?: return
+        pagePopup = null
+        val c = pagePopupCatcher
+        pagePopupCatcher = null
+        if (immediate) {
+            root.removeView(box)
+            c?.let { root.removeView(it) }
+            return
+        }
+        c?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction { root.removeView(c) }?.start()
+        box.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setDuration(180)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction { root.removeView(box) }.start()
+    }
+
+    // ---------------------------------------------------------------- megosztás
+
+    private fun sharePage() {
+        val tab = activeTab ?: return
+        val url = activeWebView?.url ?: tab.url
+        if (url.isBlank() || Urls.isStart(url)) return
+        shareText(url, tab.title)
+    }
+
+    private fun shareText(text: String, subject: String? = null) {
+        try {
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+            if (!subject.isNullOrBlank()) send.putExtra(Intent.EXTRA_SUBJECT, subject)
+            startActivity(Intent.createChooser(send, L.t("Megosztás")))
+        } catch (e: Exception) {
+            // nincs megosztó alkalmazás
+        }
+    }
+
+    // ---------------------------------------------------------------- felső üveg eszközsáv
+    // (keresés az oldalon / szövegméret): az állapotsor alatt lebegő üvegkapszula
+
+    private var topTool: LinearLayout? = null
+    private var findField: EditText? = null
+
+    private fun newTopTool(): LinearLayout {
+        hideTopTool(immediate = true)
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(dp(8), 0, dp(6), 0)
+        bar.background = glassBubble(dp(100).toFloat())
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50))
+        lp.gravity = Gravity.TOP
+        lp.topMargin = (if (dockTop) statusTop + dockHeight() else statusTop) + dp(8)
+        lp.leftMargin = dp(12)
+        lp.rightMargin = dp(12)
+        root.addView(bar, lp)
+        bar.alpha = 0f
+        bar.translationY = -dp(16).toFloat()
+        bar.scaleX = 0.9f
+        bar.animate().alpha(1f).translationY(0f).scaleX(1f).setDuration(380)
+            .setInterpolator(OvershootInterpolator(1.3f)).start()
+        topTool = bar
+        return bar
+    }
+
+    private fun toolButton(bar: LinearLayout, icon: Int, desc: String, onTap: () -> Unit): ImageButton {
+        val b = ImageButton(this)
+        b.setImageResource(icon)
+        b.imageTintList = ColorStateList.valueOf(menuTextColor())
+        val ta = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackgroundBorderless))
+        b.background = ta.getDrawable(0)
+        ta.recycle()
+        b.contentDescription = desc
+        b.setPadding(dp(9), dp(9), dp(9), dp(9))
+        b.scaleType = ImageView.ScaleType.FIT_CENTER
+        b.setOnClickListener {
+            haptic()
+            onTap()
+        }
+        bar.addView(b, LinearLayout.LayoutParams(dp(42), dp(42)))
+        return b
+    }
+
+    private fun toolLabel(bar: LinearLayout, text: String, weight: Float = 0f): TextView {
+        val t = TextView(this)
+        t.text = text
+        t.textSize = 15f
+        t.setTextColor(menuTextColor())
+        t.gravity = Gravity.CENTER
+        t.setPadding(dp(8), 0, dp(8), 0)
+        bar.addView(
+            t,
+            if (weight > 0f) LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight)
+            else LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        return t
+    }
+
+    private fun hideTopTool(immediate: Boolean = false) {
+        val bar = topTool ?: return
+        topTool = null
+        findField?.let { f ->
+            WindowCompat.getInsetsController(window, f).hide(WindowInsetsCompat.Type.ime())
+        }
+        findField = null
+        activeWebView?.clearMatches()
+        if (immediate) {
+            root.removeView(bar)
+            return
+        }
+        bar.animate().alpha(0f).translationY(-dp(12).toFloat()).scaleX(0.92f).setDuration(200)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction { root.removeView(bar) }.start()
+    }
+
+    /** Keresés az oldalon: szövegmező, találatszám, fel / le, bezárás. */
+    private fun showFindBar() {
+        val wv = activeWebView ?: return
+        releaseFocus()
+        val bar = newTopTool()
+        val col = menuTextColor()
+        val ic = ImageView(this)
+        ic.setImageResource(R.drawable.ic_m_find)
+        ic.imageTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(col, 170))
+        bar.addView(ic, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginStart = dp(8) })
+        val f = EditText(this)
+        f.hint = L.t("Keresés az oldalon")
+        f.setHintTextColor(ColorUtils.setAlphaComponent(col, 120))
+        f.setTextColor(col)
+        f.textSize = 16f
+        f.background = null
+        f.isSingleLine = true
+        f.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+        f.setPadding(dp(10), 0, dp(4), 0)
+        bar.addView(f, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        val count = toolLabel(bar, "")
+        count.textSize = 13.5f
+        count.setTextColor(ColorUtils.setAlphaComponent(col, 160))
+        toolButton(bar, R.drawable.ic_m_up, L.t("Előző")) { wv.findNext(false) }
+        toolButton(bar, R.drawable.ic_m_down, L.t("Következő")) { wv.findNext(true) }
+        toolButton(bar, R.drawable.ic_close, L.t("Bezárás")) { hideTopTool() }
+        wv.setFindListener { active, total, done ->
+            if (topTool !== bar) return@setFindListener
+            count.text = when {
+                f.text.isNullOrEmpty() -> ""
+                total == 0 -> if (done) "0/0" else ""
+                else -> "${active + 1}/$total"
+            }
+        }
+        f.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(e: android.text.Editable?) {
+                val q = e?.toString().orEmpty()
+                if (q.isEmpty()) {
+                    wv.clearMatches()
+                    count.text = ""
+                } else {
+                    wv.findAllAsync(q)
+                }
+            }
+        })
+        f.setOnEditorActionListener { _, _, _ ->
+            wv.findNext(true)
+            true
+        }
+        findField = f
+        f.requestFocus()
+        f.post { WindowCompat.getInsetsController(window, f).show(WindowInsetsCompat.Type.ime()) }
+    }
+
+    /** Szövegméret (Safari „aA”): − / + 50–200 %, oldalanként megjegyezve. */
+    private fun showTextSizeBar() {
+        val wv = activeWebView ?: return
+        val host = hostOf(wv.url ?: activeTab?.url)
+        val bar = newTopTool()
+        val small = toolLabel(bar, "A")
+        small.textSize = 14f
+        small.setOnClickListener { stepTextZoom(wv, host, -10, bar) }
+        val value = toolLabel(bar, "", 1f)
+        value.textSize = 16f
+        value.setTypeface(value.typeface, android.graphics.Typeface.BOLD)
+        value.setOnClickListener { stepTextZoom(wv, host, 0, bar) }
+        val big = toolLabel(bar, "A")
+        big.textSize = 22f
+        big.setOnClickListener { stepTextZoom(wv, host, 10, bar) }
+        toolButton(bar, R.drawable.ic_close, L.t("Bezárás")) { hideTopTool() }
+        textZoomLabel = value
+        value.text = "${wv.settings.textZoom}%"
+    }
+
+    private var textZoomLabel: TextView? = null
+
+    /** [delta] = 0: visszaállítás 100 %-ra. */
+    private fun stepTextZoom(wv: WebView, host: String, delta: Int, bar: View) {
+        haptic()
+        val cur = wv.settings.textZoom
+        val next = if (delta == 0) 100 else (cur + delta).coerceIn(50, 200)
+        wv.settings.textZoom = next
+        if (host.isNotEmpty()) {
+            if (next == 100) prefs.edit().remove("zoom_$host").apply()
+            else prefs.edit().putInt("zoom_$host", next).apply()
+        }
+        textZoomLabel?.let { l ->
+            l.text = "$next%"
+            l.scaleX = 1.18f
+            l.scaleY = 1.18f
+            l.animate().scaleX(1f).scaleY(1f).setDuration(300).setInterpolator(OvershootInterpolator(3f)).start()
+        }
+        if (topTool !== bar) textZoomLabel = null
+    }
+
+    private fun applyTextZoom(wv: WebView, url: String?) {
+        val host = hostOf(url)
+        val z = if (host.isEmpty()) 100 else prefs.getInt("zoom_$host", 100)
+        if (wv.settings.textZoom != z) wv.settings.textZoom = z
+    }
+
+    // ---------------------------------------------------------------- lapváltás a keresősávon
+
+    /** A keresősávot oldalra húzva az előző / következő lapra vált (mint a Safariban). */
+    private fun swipeToTab(dir: Int) {
+        val cur = activeTab ?: return
+        val idx = tabs.indexOf(cur)
+        val next = tabs.getOrNull(idx + dir)
+        val w = contentContainer.width.toFloat().coerceAtLeast(1f)
+        val ow = cur.webView
+        if (next == null || overviewShown || overviewBusy) {
+            // nincs több lap arra: gumiszerű visszarugózás
+            ow.animate().cancel()
+            ow.animate().translationX(0f).setDuration(380).setInterpolator(OvershootInterpolator(2f)).start()
+            return
+        }
+        haptic()
+        selectTab(next, animate = true)
+        val nw = next.webView
+        nw.animate().cancel()
+        nw.alpha = 1f
+        nw.scaleX = 1f
+        nw.scaleY = 1f
+        nw.translationX = dir * w
+        ow.animate().cancel()
+        ow.animate().translationX(-dir * w * 0.3f).alpha(0.6f).setDuration(380)
+            .setInterpolator(DecelerateInterpolator(1.8f)).start()
+        nw.animate().translationX(0f).setDuration(380).setInterpolator(DecelerateInterpolator(1.8f))
+            .withEndAction {
+                ow.translationX = 0f
+                ow.alpha = 1f
+                removeInactiveWebViews()
+            }.start()
+    }
+
+    /** Húzás közben a lap kicsit követi az ujjat. */
+    private fun swipeTabFollow(dx: Float) {
+        val wv = activeWebView ?: return
+        wv.animate().cancel()
+        wv.translationX = dx * 0.35f
     }
 
     companion object {

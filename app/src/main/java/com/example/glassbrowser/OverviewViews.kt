@@ -164,8 +164,51 @@ class PressLayout @JvmOverloads constructor(
     var onPress: ((Boolean) -> Unit)? = null
     /** Az ujj helye (a nézeten belül) és hogy le van-e nyomva, a fényhatáshoz. */
     var onTouchMove: ((Float, Float, Boolean) -> Unit)? = null
+    /** Vízszintes húzás (lapváltás): húzás közben a dx, elengedéskor dx + hogy elég messzire ment-e. */
+    var onSwipeMove: ((Float) -> Unit)? = null
+    var onSwipe: ((Float, Boolean) -> Unit)? = null
+    private var swDownX = 0f
+    private var swDownY = 0f
+    private var swiping = false
+    private val swSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (onSwipe != null) {
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    swDownX = ev.rawX
+                    swDownY = ev.rawY
+                    swiping = false
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - swDownX
+                    val dy = ev.rawY - swDownY
+                    if (!swiping && kotlin.math.abs(dx) > swSlop * 2.5f && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                        swiping = true
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        // a gyerekek (koppintás, hosszú nyomás) ne kapják meg az érintést
+                        val cancel = android.view.MotionEvent.obtain(ev)
+                        cancel.action = android.view.MotionEvent.ACTION_CANCEL
+                        super.dispatchTouchEvent(cancel)
+                        cancel.recycle()
+                    }
+                    if (swiping) {
+                        onTouchMove?.invoke(ev.x, ev.y, true)
+                        onSwipeMove?.invoke(dx)
+                        return true
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> if (swiping) {
+                    swiping = false
+                    val dx = ev.rawX - swDownX
+                    onPress?.invoke(false)
+                    onTouchMove?.invoke(ev.x, ev.y, false)
+                    val far = ev.actionMasked == android.view.MotionEvent.ACTION_UP && kotlin.math.abs(dx) > width * 0.22f
+                    onSwipe?.invoke(dx, far)
+                    return true
+                }
+            }
+        }
         when (ev.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 onPress?.invoke(true)

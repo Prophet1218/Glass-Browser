@@ -111,6 +111,7 @@ object L {
         "Mégse" to "Cancel",
         "Törlés" to "Delete",
         "Másolás" to "Copy",
+        "A letöltés kész" to "Download complete",
         "A böngészőből letöltött fájlok itt jelennek meg." to "Files you download in the browser show up here.",
         "Visszaállítás" to "Reset",
         "Igen" to "Yes",

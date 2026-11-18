@@ -249,6 +249,11 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         setContentView(R.layout.activity_main)
         preferHighRefreshRate()
+        ContextCompat.registerReceiver(
+            this, downloadDone,
+            android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED
+        )
 
         night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -4517,7 +4522,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     /** Kis üvegkapszula a sáv fölött: "Vágólapra másolva", rugózva jelenik meg és tűnik el. */
-    private fun showCopyToast(message: String = L.t("Vágólapra másolva")) {
+    private fun showCopyToast(
+        message: String = L.t("Vágólapra másolva"),
+        icon: Int = R.drawable.ic_m_check,
+        stayMs: Long = 1500L,
+        onTap: (() -> Unit)? = null
+    ) {
         val tv = copyToast ?: TextView(this).also { t ->
             t.text = L.t("Vágólapra másolva")
             t.textSize = 14.5f
@@ -4536,6 +4546,19 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             copyToast = t
         }
         tv.text = message
+        ContextCompat.getDrawable(this, icon)?.mutate()?.let { ic ->
+            ic.setBounds(0, 0, dp(18), dp(18))
+            tv.setCompoundDrawablesRelative(ic, null, null, null)
+        }
+        if (onTap != null) {
+            tv.setOnClickListener {
+                copyToastHide.run()
+                onTap()
+            }
+        } else {
+            tv.setOnClickListener(null)
+            tv.isClickable = false
+        }
         val col = menuTextColor()
         tv.setTextColor(col)
         tv.compoundDrawableTintList = ColorStateList.valueOf(col)
@@ -4554,7 +4577,34 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         tv.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f).setDuration(380)
             .setInterpolator(OvershootInterpolator(2f))
             .setUpdateListener { updateLens() }.start()
-        tv.postDelayed(copyToastHide, 1500L)
+        tv.postDelayed(copyToastHide, stayMs)
+    }
+
+    /** A rendszer letöltéskezelője szól, ha egy (általunk indított) letöltés befejeződött. */
+    private val downloadDone = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            val id = intent?.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: return
+            if (id < 0 || id !in Downloads.ids(this@MainActivity)) return
+            val dm = getSystemService(android.app.DownloadManager::class.java) ?: return
+            var ok = false
+            try {
+                dm.query(android.app.DownloadManager.Query().setFilterById(id))?.use { c ->
+                    if (c.moveToFirst()) {
+                        ok = c.getInt(c.getColumnIndexOrThrow(android.app.DownloadManager.COLUMN_STATUS)) ==
+                            android.app.DownloadManager.STATUS_SUCCESSFUL
+                    }
+                }
+            } catch (e: Exception) {
+                return
+            }
+            if (ok) {
+                showCopyToast(L.t("A letöltés kész"), R.drawable.ic_m_download, 2600L) {
+                    snapBackdrop { startActivity(Intent(this@MainActivity, DownloadsActivity::class.java)) }
+                }
+            } else {
+                showCopyToast(L.t("A letöltés nem sikerült"), R.drawable.ic_close, 2200L)
+            }
+        }
     }
 
     private val copyToastHide = Runnable {
@@ -5850,6 +5900,11 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(downloadDone)
+        } catch (e: Exception) {
+            // not registered
+        }
         handler.removeCallbacksAndMessages(null)
         tabs.forEach {
             (it.webView.parent as? ViewGroup)?.removeView(it.webView)

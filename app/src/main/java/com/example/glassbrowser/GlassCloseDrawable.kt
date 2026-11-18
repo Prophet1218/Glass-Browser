@@ -73,6 +73,17 @@ class GlassCloseDrawable(private val host: View) : Drawable() {
     private val oval = RectF()
 
     /** A kártya bélyegképe (null = nincs: a régi áttetsző kör látszik). */
+    /**
+     * Alternative source: a screen-sized backdrop bitmap drawn full-window (FIT_XY) behind the
+     * button (downloads screen). The part under the button is found by its window position.
+     */
+    var screenSource: Bitmap? = null
+        set(value) {
+            field = value
+            invalidateSelf()
+        }
+    private val winLoc = IntArray(2)
+
     fun setThumbnail(bm: Bitmap?) {
         if (thumb === bm) return
         thumb = bm
@@ -108,17 +119,31 @@ class GlassCloseDrawable(private val host: View) : Drawable() {
      * változatát. Hamis, ha nincs használható bélyegkép.
      */
     private fun ensureSmall(): Boolean {
-        val src = thumb ?: return false
+        val scr = screenSource
+        val src = scr ?: thumb ?: return false
         if (src.isRecycled || src.width <= 0 || src.height <= 0) return false
         // hardveres képből szoftveresen nem lehet olvasni: ilyenkor a régi kinézet marad
         if (src.config == Bitmap.Config.HARDWARE) return false
-        val card = host.parent as? View ?: return false
-        val cw = card.width
-        if (cw <= 0 || host.width <= 0 || host.height <= 0) return false
-        // a kártyán a kép a teljes szélességre nagyítva, a tetejéhez igazítva látszik
-        val s = cw.toFloat() / src.width
-        val cxB = (host.left + host.width / 2f) / s
-        val cyB = (host.top + host.height / 2f) / s
+        if (host.width <= 0 || host.height <= 0) return false
+        val s: Float
+        val cxB: Float
+        val cyB: Float
+        if (scr != null) {
+            val rw = host.rootView.width
+            if (rw <= 0) return false
+            host.getLocationInWindow(winLoc)
+            s = rw.toFloat() / src.width
+            cxB = (winLoc[0] + host.width / 2f) / s
+            cyB = (winLoc[1] + host.height / 2f) / s
+        } else {
+            val card = host.parent as? View ?: return false
+            val cw = card.width
+            if (cw <= 0) return false
+            // a kártyán a kép a teljes szélességre nagyítva, a tetejéhez igazítva látszik
+            s = cw.toFloat() / src.width
+            cxB = (host.left + host.width / 2f) / s
+            cyB = (host.top + host.height / 2f) / s
+        }
         // lencse: a gombnál kisebb területet nagyítunk a teljes körre
         val half = host.width / s / 2f / LENS
         val kx = cxB.toInt()

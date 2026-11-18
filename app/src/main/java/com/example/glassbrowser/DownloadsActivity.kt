@@ -356,6 +356,8 @@ class DownloadsActivity : AppCompatActivity() {
         smallTitle.alpha = f
         smallTitle.translationY = (1f - f) * dpf(6f)
         bigTitle.alpha = 1f - f * 0.85f
+        // the glass buttons show the backdrop under their current position
+        for (b in glassButtons) b.background?.invalidateSelf()
         onScrollExtra?.invoke()
     }
 
@@ -422,8 +424,7 @@ class DownloadsActivity : AppCompatActivity() {
         item.status == DownloadManager.STATUS_RUNNING || item.status == DownloadManager.STATUS_PENDING ||
             item.status == DownloadManager.STATUS_PAUSED
 
-    private fun render() {
-        showEmpty(items.isEmpty())
+    private fun updateCount() {
         val n = items.size
         val active = items.count { isActive(it) }
         countText.visibility = if (n == 0) View.INVISIBLE else View.VISIBLE
@@ -432,6 +433,12 @@ class DownloadsActivity : AppCompatActivity() {
         } else {
             "$n fájl" + (if (active > 0) "  ·  $active folyamatban" else "")
         }
+    }
+
+    private fun render() {
+        showEmpty(items.isEmpty())
+        val n = items.size
+        updateCount()
 
         while (rows.size > n) {
             val r = rows.removeAt(rows.size - 1)
@@ -499,21 +506,31 @@ class DownloadsActivity : AppCompatActivity() {
         return android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(pressTint), body, null)
     }
 
+    /** Kerek folyékony üveg gomb (mint a lapváltó bezáró gombja), fehér ikonnal. */
+    private val glassButtons = ArrayList<ImageButton>()
+
+    @SuppressLint("ClickableViewAccessibility")
     private fun roundButton(icon: Int, label: String): ImageButton {
         val b = ImageButton(this)
         b.setImageResource(icon)
-        b.imageTintList = ColorStateList.valueOf(textColor)
-        b.background = android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(pressTint),
-            GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(if (night) 0x14FFFFFF else 0x0D000000)
-            },
-            null
-        )
-        b.setPadding(dp(9), dp(9), dp(9), dp(9))
+        b.imageTintList = ColorStateList.valueOf(Color.WHITE)
+        val glass = GlassCloseDrawable(b)
+        glass.convex = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("glass_convex", false)
+        glass.screenSource = SettingsActivity.backdrop?.takeIf { !it.isRecycled }
+        b.background = glass
+        b.setPadding(dp(10), dp(10), dp(10), dp(10))
         b.scaleType = ImageView.ScaleType.FIT_CENTER
         b.contentDescription = label
+        // lenyomásra kicsit összenyomódik, elengedve rugózva visszaugrik
+        b.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.86f).scaleY(0.86f).setDuration(120L).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(380L).setInterpolator(OvershootInterpolator(3f)).start()
+            }
+            false
+        }
+        glassButtons.add(b)
         return b
     }
 
@@ -525,7 +542,13 @@ class DownloadsActivity : AppCompatActivity() {
         card.setPadding(dp(12), dp(12), dp(10), dp(12))
         card.background = glassDrawable(oval = false, radius = dpf(22f))
         // a megosztás gomb és a folyamatjelző eltűnése / megjelenése finoman animál
-        card.layoutTransition = LayoutTransition()
+        card.layoutTransition = LayoutTransition().apply {
+            // only fade the share button / progress bar in and out; the size of the card
+            // (delete collapse) is animated by hand
+            disableTransitionType(LayoutTransition.CHANGING)
+            disableTransitionType(LayoutTransition.CHANGE_APPEARING)
+            disableTransitionType(LayoutTransition.CHANGE_DISAPPEARING)
+        }
 
         val icon = ImageView(this)
         val art = FileIconDrawable()
@@ -717,6 +740,21 @@ class DownloadsActivity : AppCompatActivity() {
         if (row.deleting) return
         row.deleting = true
         row.press?.cancel()
+        // the data goes first: the 0.8 s refresher can no longer bring the card back
+        try {
+            getSystemService(DownloadManager::class.java)?.remove(item.id)
+        } catch (e: Exception) {
+            // already gone
+        }
+        Downloads.forget(this, item.id)
+        shownIds.remove(item.id)
+        val idx = rows.indexOf(row)
+        if (idx >= 0) {
+            rows.removeAt(idx)
+            if (idx < items.size) items.removeAt(idx)
+        }
+        lastKey = items.joinToString("|") { "${it.id}:${it.status}:${it.got}:${it.total}" }
+        updateCount()
         val card = row.card
         card.animate().cancel()
         val w = card.width.toFloat().coerceAtLeast(1f)
@@ -741,16 +779,8 @@ class DownloadsActivity : AppCompatActivity() {
                 }
                 a.addListener(object : AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: Animator) {
-                        getSystemService(DownloadManager::class.java)?.remove(item.id)
-                        Downloads.forget(this@DownloadsActivity, item.id)
-                        shownIds.remove(item.id)
-                        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                        lp.bottomMargin = m
-                        card.layoutParams = lp
-                        swipeFx(card, 0f)
-                        row.deleting = false
-                        lastKey = ""
-                        load()
+                        list.removeView(card)
+                        if (items.isEmpty()) showEmpty(true)
                     }
                 })
                 a.start()

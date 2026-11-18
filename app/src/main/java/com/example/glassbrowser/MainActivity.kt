@@ -3239,11 +3239,58 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 if (liveAnim !== a) return
                 liveAnim = null
                 onEnd()
+                showLiveDecor(tab, card)
                 watchLiveCard()
             }
         })
         liveAnim = a
         a.start()
+    }
+
+    /**
+     * A kártyában görgő élő oldal fölé (mivel az a lapváltó fölött van) ugyanaz a keret és üveg
+     * bezáró gomb kerül, mint a kártyán; ugyanazzal a beúszással jelenik meg, mint máskor.
+     */
+    private var liveDecor: FrameLayout? = null
+
+    private fun showLiveDecor(tab: Tab, card: RectF) {
+        removeLiveDecor()
+        val d = FrameLayout(this)
+        d.isClickable = false
+        val ring = View(this)
+        ring.background = ContextCompat.getDrawable(this, R.drawable.tab_card_active)
+        d.addView(ring, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val close = ImageButton(this)
+        close.setImageResource(R.drawable.ic_close)
+        close.imageTintList = ColorStateList.valueOf(Color.WHITE)
+        close.scaleType = ImageView.ScaleType.FIT_CENTER
+        close.setPadding(dp(7), dp(7), dp(7), dp(7))
+        close.contentDescription = L.t("Bezárás")
+        val glass = GlassCloseDrawable(close)
+        glass.setThumbnail(tab.thumbnail)
+        close.background = glass
+        close.setOnClickListener {
+            // a valódi kártya bezáró gombja (ugyanaz az animáció)
+            endLiveCard(now = true)
+            cardView(tab)?.findViewById<View>(R.id.tabClose)?.performClick()
+        }
+        val clp = FrameLayout.LayoutParams(dp(28), dp(28))
+        clp.gravity = Gravity.TOP or Gravity.END
+        clp.setMargins(dp(8), dp(8), dp(8), dp(8))
+        d.addView(close, clp)
+        val lp = FrameLayout.LayoutParams(card.width().toInt(), card.height().toInt())
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.leftMargin = card.left.toInt()
+        lp.topMargin = card.top.toInt()
+        root.addView(d, root.indexOfChild(scene) + 1, lp)
+        d.alpha = 0f
+        d.animate().alpha(1f).setDuration(380).setInterpolator(DecelerateInterpolator()).start()
+        liveDecor = d
+    }
+
+    private fun removeLiveDecor() {
+        liveDecor?.let { it.animate().cancel(); root.removeView(it) }
+        liveDecor = null
     }
 
     /** Megvárja, amíg a kártyában görgő oldal megáll, aztán képre cseréli. */
@@ -3289,6 +3336,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
             }
             cv?.alpha = 1f
+            removeLiveDecor()
             // egy képkocka múlva (amikor a kártya már a friss képet mutatja) kerül vissza az oldal
             root.postOnAnimation {
                 if (liveTab == null) resetLiveTransform()
@@ -3366,6 +3414,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             val rect = liveCardRect!!
             liveTab = null
             liveWatch = null
+            liveDecor?.let { d -> d.animate().alpha(0f).setDuration(120).withEndAction { removeLiveDecor() }.start() }
             liveAnim?.cancel()
             animateTitles(0f, 160)
             val back = ValueAnimator.ofFloat(1f, 0f)

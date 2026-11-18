@@ -789,17 +789,57 @@ class DownloadsActivity : AppCompatActivity() {
         fx.start()
     }
 
+    /**
+     * A letöltött fájl címe, amit más alkalmazás is meg tud nyitni. A letöltéskezelő saját
+     * (content://downloads/...) címét sok alkalmazás nem tudja olvasni, ezért ha van, a
+     * médiatár (MediaStore) címét adjuk át; a típust a fájl kiterjesztéséből is kitaláljuk.
+     */
+    private fun fileUriAndType(item: Item): Pair<Uri, String>? {
+        val dm = getSystemService(DownloadManager::class.java) ?: return null
+        var uri: Uri? = null
+        var local: String? = null
+        try {
+            dm.query(DownloadManager.Query().setFilterById(item.id))?.use { c ->
+                if (c.moveToFirst()) {
+                    val mi = c.getColumnIndex("mediaprovider_uri")
+                    if (mi >= 0) c.getString(mi)?.takeIf { it.isNotBlank() }?.let { uri = Uri.parse(it) }
+                    val li = c.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                    if (li >= 0) local = c.getString(li)
+                }
+            }
+        } catch (e: Exception) {
+            // marad a letöltéskezelő címe
+        }
+        val u = uri ?: dm.getUriForDownloadedFile(item.id) ?: return null
+        val name = (local?.let { Uri.parse(it).lastPathSegment } ?: item.title).lowercase()
+        val ext = name.substringAfterLast('.', "")
+        val byExt = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+        val known = (item.mime ?: dm.getMimeTypeForDownloadedFile(item.id))
+            ?.takeIf { it.isNotBlank() && it != "application/octet-stream" && it != "application/force-download" }
+        return u to (known ?: byExt ?: "*/*")
+    }
+
     private fun open(item: Item) {
         if (item.status != DownloadManager.STATUS_SUCCESSFUL) return
-        val dm = getSystemService(DownloadManager::class.java) ?: return
-        val uri = dm.getUriForDownloadedFile(item.id) ?: return
-        val type = item.mime ?: dm.getMimeTypeForDownloadedFile(item.id) ?: "*/*"
+        val (uri, type) = fileUriAndType(item) ?: return
+        val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, type)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
-            startActivity(
-                Intent(Intent.ACTION_VIEW).setDataAndType(uri, type)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            )
+            startActivity(view)
         } catch (e: ActivityNotFoundException) {
+            // típus nélkül még egyszer (a rendszer felajánl egy alkalmazást)
+            try {
+                startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_VIEW).setDataAndType(uri, "*/*")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                        L.t("Megnyitás ezzel")
+                    )
+                )
+            } catch (e2: Exception) {
+                Toast.makeText(this, L.t("Nincs alkalmazás a fájl megnyitásához"), Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: SecurityException) {
             Toast.makeText(this, L.t("Nincs alkalmazás a fájl megnyitásához"), Toast.LENGTH_SHORT).show()
         }
     }
@@ -807,9 +847,7 @@ class DownloadsActivity : AppCompatActivity() {
     /** A kész fájl megosztása más alkalmazással (rendszer megosztó lap). */
     private fun share(item: Item) {
         if (item.status != DownloadManager.STATUS_SUCCESSFUL) return
-        val dm = getSystemService(DownloadManager::class.java) ?: return
-        val uri: Uri = dm.getUriForDownloadedFile(item.id) ?: return
-        val type = item.mime ?: dm.getMimeTypeForDownloadedFile(item.id) ?: "*/*"
+        val (uri, type) = fileUriAndType(item) ?: return
         val send = Intent(Intent.ACTION_SEND)
             .setType(type)
             .putExtra(Intent.EXTRA_STREAM, uri)

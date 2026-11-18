@@ -1841,6 +1841,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         // letöltések: a rendszer letöltéskezelője tölti le a Letöltések mappába
         wv.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
+            askNotificationPermission()
             val ok = Downloads.start(applicationContext, url, userAgent, contentDisposition, mimetype)
             showCopyToast(if (ok) L.t("Letöltés elindult") else L.t("Ez a letöltés nem támogatott"))
         }
@@ -7416,6 +7417,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         if (items.isEmpty()) return
         showPagePopup(link ?: image ?: "", items)
+    }
+
+    /** Android 13+: a letöltés-értesítésekhez egyszer engedélyt kér. */
+    private fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT < 33 || prefs.getBoolean("asked_notif", false)) return
+        prefs.edit().putBoolean("asked_notif", true).apply()
+        ensureAndroidPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS)) { }
     }
 
     private fun copyText(t: String) {

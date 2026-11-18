@@ -73,11 +73,13 @@ object Downloads {
                 ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', ""))
             if (type != null) req.setMimeType(type)
             req.setTitle(name)
-            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            // a rendszer kék letöltés-ikonja helyett a böngésző saját értesítése (DownloadNotifier)
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_HIDDEN)
             req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
             val dm = ctx.getSystemService(DownloadManager::class.java) ?: return false
             val id = dm.enqueue(req)
             remember(ctx, id)
+            DownloadNotifier.started(ctx)
             true
         } catch (e: Exception) {
             false

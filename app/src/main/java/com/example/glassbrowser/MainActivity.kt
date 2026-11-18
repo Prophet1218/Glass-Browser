@@ -1291,8 +1291,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun captureStatusShot(tab: Tab) {
         if (statusShotBusy || statusTop <= 0 || scene.width <= 0 || capturing) return
-        val w = (scene.width / 4).coerceAtLeast(8)
-        val h = (statusTop / 4).coerceAtLeast(2)
+        // teljes felbontás: a kicsinyített kép felnagyítva elmosódottnak látszott (villanás)
+        val w = scene.width
+        val h = statusTop
         val bm = tab.statusShot?.takeIf { !it.isRecycled && it.width == w && it.height == h }
             ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         statusShotBusy = true
@@ -1588,6 +1589,16 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         topVisAnim = anim
         anim.start()
+    }
+
+    private fun snapTopFade(scrollY: Int) {
+        flowAnim?.cancel()
+        flowAnim = null
+        topScroll = (scrollY / (48f * resources.displayMetrics.density)).coerceIn(0f, 1f)
+        val want = if (scrollY > dp(2)) 1f else 0f
+        flowTarget = want
+        flowAmt = want
+        updateLens()
     }
 
     private fun updateTopFade(scrollY: Int) {
@@ -7675,6 +7686,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         runSwipe(1f) {
             endSwipeState()
             selectTab(to, animate = false)
+            // az új lap felső elmosása azonnal a végleges erősségű (nem úszik be utólag):
+            // így pontosan egyezik az áttűnés végén látott képpel
+            snapTopFade(effScroll(to))
             // az állapotsor ikonjai a lap ismert színéből azonnal (nem várják meg a mérést)
             val c = to.statusAvg.takeIf { it != 0 } ?: statusColorOf(to)
             if (c != 0) statusBright = ColorUtils.calculateLuminance(c) > 0.5

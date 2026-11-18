@@ -3279,8 +3279,16 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         liveAnim?.cancel()
         liveAnim = null
         val finish = {
-            tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
-            cardView(tab)?.alpha = 1f
+            // a kép közvetlenül cserélődik (a lista "változás" animációja áttűnt volna a régi
+            // képből: ettől villant egy szellemkép a megálláskor)
+            val cv = cardView(tab)
+            val bm = tab.thumbnail
+            if (cv != null && bm != null) {
+                cv.findViewById<ImageView>(R.id.tabThumb)?.setImageBitmap(bm)
+            } else {
+                tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
+            }
+            cv?.alpha = 1f
             // egy képkocka múlva (amikor a kártya már a friss képet mutatja) kerül vissza az oldal
             root.postOnAnimation {
                 if (liveTab == null) resetLiveTransform()

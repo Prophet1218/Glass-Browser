@@ -331,7 +331,8 @@ object L {
         "Elhalványulás elmosódva" to "Blur and fade",
         "Elhalványulás oldalra" to "Fade to the side",
         "Kilökés felfelé" to "Toss up",
-        "Összecsukódás" to "Fold away"
+        "Összecsukódás" to "Fold away",
+        "Gyakran látogatott" to "Frequently visited"
     )
 
     private val HU: Map<String, String> = EN.entries.associate { (k, v) -> v to k }

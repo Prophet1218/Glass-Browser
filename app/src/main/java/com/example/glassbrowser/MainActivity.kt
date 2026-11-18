@@ -1232,49 +1232,122 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = !night
     }
 
-    /** A frissítés jelzője a húzással együtt ereszkedik és forog. */
+    /** A húzásra frissítés jelének rajza (nyilas körív, kitöltődő korong, pörgés). */
+    private var pullArrow: PullRefreshDrawable? = null
+    /** Épp frissít-e (a jel pörög, amíg a lap be nem töltődik). */
+    private var pullRefreshing = false
+    private var pullTab: Tab? = null
+    private var pullSawLoading = false
+    private var pullSpinSince = 0L
+
+    /** Frissítés közben figyeli a lapot: ha betöltődött (vagy elváltottunk róla), a jel összezsugorodik. */
+    private val pullWatch = object : Runnable {
+        override fun run() {
+            if (!pullRefreshing) return
+            val t = pullTab
+            val el = android.os.SystemClock.uptimeMillis() - pullSpinSince
+            if (t != null && t.loading) pullSawLoading = true
+            val done = t == null || t !== activeTab || overviewShown || el > 12000L ||
+                (pullSawLoading && !t.loading && el > 550L) || (!pullSawLoading && el > 2500L)
+            if (done) endPullRefresh() else handler.postDelayed(this, 100L)
+        }
+    }
+
+    /** A frissítés jelzője a húzással együtt ereszkedik, a nyíl a húzással forog és rajzolódik ki. */
     private fun showPull(dist: Float) {
+        val d = resources.displayMetrics.density
         if (pullSkin == null) {
             // ugyanaz az üveg, mint a keresősávé (a "bőrét" is a többivel együtt állítjuk)
-            val d0 = resources.displayMetrics.density
-            val skin = GlassSkinDrawable(d0)
+            val skin = GlassSkinDrawable(d)
             pullIndicator.background = skin
             skins.add(skin)
             pullSkin = skin
             applyGlassMode()
         }
-        pullIcon.imageTintList = ColorStateList.valueOf(contentColor ?: Color.WHITE)
-        val d = resources.displayMetrics.density
+        val arrow = pullArrow ?: PullRefreshDrawable(d).also {
+            pullArrow = it
+            pullIcon.imageTintList = null
+            pullIcon.setImageDrawable(it)
+        }
+        if (pullRefreshing) {
+            // frissítés közben újra lehúzták: elölről indul a jel
+            pullRefreshing = false
+            pullTab = null
+            handler.removeCallbacks(pullWatch)
+            arrow.reset()
+        }
+        arrow.color = contentColor ?: Color.WHITE
         val trigger = PULL_TRIGGER * d
         val p = (dist / trigger).coerceIn(0f, 1.4f)
         pullIndicator.animate().cancel()
-        pullIcon.animate().cancel()
         pullIndicator.translationY = webTop().coerceAtLeast(statusTop) + d * 4f + dist.coerceAtMost(trigger * 1.3f) - dp(44)
         pullIndicator.alpha = (p * 1.4f).coerceIn(0f, 1f)
         val s = 0.6f + 0.4f * p.coerceAtMost(1f)
         pullIndicator.scaleX = s
         pullIndicator.scaleY = s
-        pullIcon.rotation = p * 300f
+        arrow.progress = p
+        // a nyíl a húzás mértékével fordul el
+        pullIcon.rotation = p * 140f
         updateLens()
         if (p >= 1f && !pullArmed) {
             pullArmed = true
             haptic()
-        } else if (p < 1f) {
+            arrow.setArmed(true)
+            // a küszöbnél egy kis rugós "pattanás"
+            pullIcon.animate().cancel()
+            pullIcon.scaleX = 1.22f
+            pullIcon.scaleY = 1.22f
+            pullIcon.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(320)
+                .setInterpolator(OvershootInterpolator(2.4f)).start()
+        } else if (p < 1f && pullArmed) {
             pullArmed = false
+            arrow.setArmed(false)
         }
     }
 
     private fun finishPull(refreshing: Boolean) {
         pullArmed = false
+        val d = resources.displayMetrics.density
+        val arrow = pullArrow
         if (refreshing) {
-            // pörög egy kicsit, majd felúszik
-            pullIcon.animate().rotationBy(360f).setDuration(520).setInterpolator(DecelerateInterpolator()).start()
-            pullIndicator.animate().alpha(0f).translationY(statusTop - dp(44).toFloat())
-                .setStartDelay(420).setDuration(260).setUpdateListener { updateLens() }.start()
+            // rugósan a pihenő helyére úszik, és pörög, amíg a lap betöltődik
+            pullRefreshing = true
+            pullTab = activeTab
+            pullSawLoading = false
+            pullSpinSince = android.os.SystemClock.uptimeMillis()
+            arrow?.setArmed(true)
+            arrow?.startSpin()
+            val rest = webTop().coerceAtLeast(statusTop) + d * 4f + PULL_TRIGGER * d * 0.8f - dp(44)
+            pullIndicator.animate().translationY(rest).scaleX(1f).scaleY(1f).alpha(1f)
+                .setStartDelay(0).setDuration(420).setInterpolator(OvershootInterpolator(1.2f))
+                .withLayer().setUpdateListener { updateLens() }.start()
+            handler.removeCallbacks(pullWatch)
+            handler.postDelayed(pullWatch, 100L)
         } else {
-            pullIndicator.animate().alpha(0f).translationY(statusTop - dp(44).toFloat())
-                .setStartDelay(0).setDuration(200).setUpdateListener { updateLens() }.start()
+            arrow?.setArmed(false)
+            pullIndicator.animate().alpha(0f).translationY(statusTop - dp(44).toFloat()).scaleX(0.6f).scaleY(0.6f)
+                .setStartDelay(0).setDuration(220).setInterpolator(android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withLayer().setUpdateListener { updateLens() }
+                .withEndAction { if (!pullRefreshing) arrow?.reset() }.start()
         }
+    }
+
+    /** A frissítés vége: a pörgő jel lágyan összezsugorodik és eltűnik. */
+    private fun endPullRefresh() {
+        if (!pullRefreshing) return
+        pullRefreshing = false
+        pullTab = null
+        handler.removeCallbacks(pullWatch)
+        pullIndicator.animate().scaleX(0.2f).scaleY(0.2f).alpha(0f)
+            .setStartDelay(0).setDuration(280).setInterpolator(android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+            .withLayer().setUpdateListener { updateLens() }
+            .withEndAction {
+                if (!pullRefreshing) {
+                    pullArrow?.reset()
+                    pullIcon.rotation = 0f
+                }
+                updateLens()
+            }.start()
     }
 
     /** A felső elmosás ki- / beúsztatása (a lapváltó nyitásakor és zárásakor). */
@@ -2133,11 +2206,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         tabList.layoutManager = GridLayoutManager(this, 2)
         tabList.adapter = tabAdapter
         // bezáráskor a többi kártya lágyan csúszik a helyére
-        tabList.itemAnimator = androidx.recyclerview.widget.DefaultItemAnimator().apply {
-            moveDuration = 340
-            removeDuration = 160
-            addDuration = 200
-        }
+        // (a bezárt kártyát már a bezárási effekt eltüntette: rugós mozgás, újbóli halványítás nélkül)
+        tabList.itemAnimator = TabItemAnimator()
         // (a halom elrendezés figyelője a húzás előtt kapja meg az érintést)
         setupStackLayout()
         setupSwipeToClose()
@@ -5605,6 +5675,15 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         return list
     }
 
+    /** A webhely rövid neve a címéből: "hu.wikipedia.org" -> "Wikipedia", "bbc.co.uk" -> "Bbc". */
+    private fun siteName(host: String): String {
+        val labels = host.removePrefix("www.").split('.').filter { it.isNotEmpty() }
+        if (labels.size < 2) return host
+        var i = labels.size - 2
+        if (i > 0 && labels[i] in setOf("co", "com", "org", "net", "gov", "ac", "edu")) i--
+        return labels[i].replaceFirstChar { it.uppercase() }
+    }
+
     private fun tileName(url: String): String =
         Urls.host(url).substringBefore('.').replaceFirstChar { it.uppercase() }
 
@@ -5929,10 +6008,20 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private fun startPageJs(): String {
         fun item(title: String, url: String) = JSONObject().put("title", title).put("url", url)
         val tiles = JSONArray()
-        startTiles().forEach { tiles.put(item(it.first, it.second)) }
+        val st = startTiles()
+        st.forEach { tiles.put(item(it.first, it.second)) }
         val recent = JSONArray()
         HistoryStore.recent(5).forEach { e -> recent.put(item(e.title, e.url)) }
+        // "Gyakran látogatott": a csempék között nem szereplő, legtöbbször megnyitott webhelyek
+        val frequent = JSONArray()
+        val tileHosts = st.map { Urls.host(it.second) }.toSet()
+        HistoryStore.frequentSites(8, tileHosts).forEach { e ->
+            val u = Uri.parse(e.url)
+            val h = u.host ?: return@forEach
+            frequent.put(item(siteName(h), (u.scheme ?: "https") + "://" + h))
+        }
         val data = JSONObject().put("tiles", tiles).put("recent", recent)
+            .put("frequent", frequent).put("frequentTitle", L.t("Gyakran látogatott"))
             .put("exact", true).put("custom", prefs.contains(KEY_SHORTCUTS))
             .put("lang", if (L.en) "en" else "hu")
         return "window.glassData && window.glassData($data);"

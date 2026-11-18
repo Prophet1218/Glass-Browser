@@ -181,6 +181,7 @@ object L {
         "zöld" to "green",
         "rózsaszín" to "pink",
         "szürke" to "gray",
+        "Szürke alap" to "Gray base",
         "lila" to "purple",
         "narancs" to "orange",
         "grafit" to "graphite",

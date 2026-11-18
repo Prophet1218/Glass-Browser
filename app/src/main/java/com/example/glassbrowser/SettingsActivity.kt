@@ -49,7 +49,7 @@ import androidx.recyclerview.widget.RecyclerView
 object AppIcons {
     const val DEFAULT = "frost_blue"
 
-    val styles get() = listOf("flat" to L.t("Sima"), "frost" to L.t("Matt üveg"), "liquid" to L.t("Folyékony üveg"))
+    val styles get() = listOf("flat" to L.t("Sima"), "frost" to L.t("Matt üveg"), "liquid" to L.t("Folyékony üveg"), "mono" to L.t("Szürke alap"))
     val colors get() = listOf(
         "blue" to L.t("kék"), "purple" to L.t("lila"), "green" to L.t("zöld"),
         "orange" to L.t("narancs"), "pink" to L.t("szürke"), "graphite" to L.t("grafit")

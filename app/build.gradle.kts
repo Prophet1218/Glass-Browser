@@ -11,7 +11,7 @@ android {
         applicationId = "com.example.glassbrowser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 81
+        versionCode = 82
         versionName = "1.0"
     }
 

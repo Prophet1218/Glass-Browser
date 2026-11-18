@@ -3313,7 +3313,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      */
     private fun keepDecorOnCard(tab: Tab) {
         val d = liveDecor ?: return
-        decorRing?.visibility = View.GONE   // a kártya saját kerete már látszik
+        // a réteg kerete és X-e marad (nincs csere, nincs villanás); a kártyáé rejtve
         val lp = d.layoutParams as FrameLayout.LayoutParams
         val follow = object : Runnable {
             override fun run() {
@@ -3325,6 +3325,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     return
                 }
                 cv.findViewById<View>(R.id.tabClose)?.alpha = 0f
+                cv.findViewById<View>(R.id.tabActive)?.alpha = 0f
                 val tx = r.left - lp.leftMargin
                 val ty = r.top - lp.topMargin
                 if (d.translationX != tx || d.translationY != ty) {
@@ -3341,7 +3342,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private fun removeLiveDecor() {
         liveDecor?.let { it.animate().cancel(); root.removeView(it) }
         liveDecor = null
-        decorTab?.let { t -> cardView(t)?.findViewById<View>(R.id.tabClose)?.alpha = 1f }
+        decorTab?.let { t ->
+            cardView(t)?.findViewById<View>(R.id.tabClose)?.alpha = 1f
+            cardView(t)?.findViewById<View>(R.id.tabActive)?.alpha = ringAlpha
+        }
         decorTab = null
         decorRing = null
         (liveCloseBtn?.background as? GlassSkinDrawable)?.let { skins.remove(it) }
@@ -3392,6 +3396,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
             }
             cv?.findViewById<View>(R.id.tabClose)?.alpha = 0f
+            cv?.findViewById<View>(R.id.tabActive)?.alpha = 0f
             cv?.alpha = 1f
             keepDecorOnCard(tab)
             // egy képkocka múlva (amikor a kártya már a friss képet mutatja) kerül vissza az oldal
@@ -3414,9 +3419,16 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         anim.interpolator = DecelerateInterpolator()
         anim.addUpdateListener {
             ringAlpha = it.animatedValue as Float
+            val dt = decorTab
             for (i in 0 until tabList.childCount) {
                 val child = tabList.getChildAt(i)
                 val ring = child.findViewById<View>(R.id.tabActive) ?: continue
+                // az élő kártya kerete és X-e a ráhelyezett rétegen van: a kártyáé rejtve marad
+                if (dt != null && tabs.getOrNull(tabList.getChildAdapterPosition(child)) === dt) {
+                    ring.alpha = 0f
+                    child.findViewById<View>(R.id.tabClose)?.alpha = 0f
+                    continue
+                }
                 ring.alpha = ringAlpha
                 if (ring.visibility == View.VISIBLE) {
                     child.findViewById<View>(R.id.tabClose)?.alpha = ringAlpha

@@ -2211,6 +2211,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     /** Lap bezárása (a lapváltó kártyájának × gombjával). */
     private fun closeTab(tab: Tab) {
         endLiveCard(now = true)
+        if (tab === decorTab) removeLiveDecor()
         if (overviewBusy) return
         val idx = tabs.indexOf(tab)
         if (idx < 0) return
@@ -3282,8 +3283,11 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         close.setOnClickListener {
             // a valódi kártya bezáró gombja (ugyanaz az animáció)
             endLiveCard(now = true)
+            removeLiveDecor()
             cardView(tab)?.findViewById<View>(R.id.tabClose)?.performClick()
         }
+        decorTab = tab
+        decorRing = ring
         val clp = FrameLayout.LayoutParams(dp(28), dp(28))
         clp.gravity = Gravity.TOP or Gravity.END
         clp.setMargins(dp(8), dp(8), dp(8), dp(8))
@@ -3300,10 +3304,46 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     private var liveCloseBtn: View? = null
+    private var decorTab: Tab? = null
+    private var decorRing: View? = null
+
+    /**
+     * Megállás után is ugyanaz az üveg X marad a kártyán (a kártya saját gombja rejtve): a
+     * rács görgetésekor követi a kártyát; ha a kártya eltűnik, vele együtt megy.
+     */
+    private fun keepDecorOnCard(tab: Tab) {
+        val d = liveDecor ?: return
+        decorRing?.visibility = View.GONE   // a kártya saját kerete már látszik
+        val lp = d.layoutParams as FrameLayout.LayoutParams
+        val follow = object : Runnable {
+            override fun run() {
+                if (liveDecor !== d || decorTab !== tab) return
+                val cv = cardView(tab)
+                val r = if (overviewShown) cardRect(tab) else null
+                if (cv == null || r == null) {
+                    removeLiveDecor()
+                    return
+                }
+                cv.findViewById<View>(R.id.tabClose)?.alpha = 0f
+                val tx = r.left - lp.leftMargin
+                val ty = r.top - lp.topMargin
+                if (d.translationX != tx || d.translationY != ty) {
+                    d.translationX = tx
+                    d.translationY = ty
+                    updateLens()
+                }
+                root.postOnAnimation(this)
+            }
+        }
+        root.postOnAnimation(follow)
+    }
 
     private fun removeLiveDecor() {
         liveDecor?.let { it.animate().cancel(); root.removeView(it) }
         liveDecor = null
+        decorTab?.let { t -> cardView(t)?.findViewById<View>(R.id.tabClose)?.alpha = 1f }
+        decorTab = null
+        decorRing = null
         (liveCloseBtn?.background as? GlassSkinDrawable)?.let { skins.remove(it) }
         liveCloseBtn = null
         updateLens()
@@ -3351,8 +3391,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             } else {
                 tabAdapter.notifyItemChanged(tabs.indexOf(tab).coerceAtLeast(0))
             }
+            cv?.findViewById<View>(R.id.tabClose)?.alpha = 0f
             cv?.alpha = 1f
-            removeLiveDecor()
+            keepDecorOnCard(tab)
             // egy képkocka múlva (amikor a kártya már a friss képet mutatja) kerül vissza az oldal
             root.postOnAnimation {
                 if (liveTab == null) resetLiveTransform()
@@ -3396,6 +3437,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         val liveClose = liveTab != null && liveTab === (target ?: activeTab) && liveCardRect != null &&
             overviewShown && !overviewBusy
         if (!liveClose) endLiveCard(now = true)
+        if (!liveClose && liveTab == null) removeLiveDecor()
         if (!overviewShown || overviewBusy) return
         if (!liveClose) refreshActiveThumb(target)
         val tab = target ?: return
@@ -3478,6 +3520,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun openTabFromOverview(tab: Tab, notify: Boolean = true) {
         endLiveCard(now = true)
+        removeLiveDecor()
         refreshActiveThumb(tab)
         if (!overviewShown) {
             selectTab(tab, animate = false)

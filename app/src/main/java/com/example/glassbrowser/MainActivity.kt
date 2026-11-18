@@ -963,8 +963,12 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             if (swActive && !overviewShown) {
                 val c = swipeStatusColor()
                 if (c != 0) {
+                    // a szín (ha átlátszó is) a lap elmosott képével keveredik, ugyanúgy, ahogy
+                    // a legörgetett lapon az állapotsor kinéz: nincs fekete villanás, nincs ugrás
+                    val k = (topStrength / (6f * d)).coerceIn(0f, 1f)
+                    val ft = if (night) Color.argb((50 * k).toInt(), 0, 0, 0) else Color.argb((60 * k).toInt(), 255, 255, 255)
                     l.setPadColor(c)
-                    l.setTop(statusTop.toFloat(), 0f, 0f, 0, statusTop.toFloat(), true)
+                    l.setTop(statusTop.toFloat(), 18f * d, topStrength, ft, statusTop.toFloat(), true)
                 }
             }
 
@@ -1291,7 +1295,20 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 if (result != PixelCopy.SUCCESS) return@request
                 statusProbe.getPixels(statusPixels, 0, 24, 0, 0, 24, 2)
                 var sum = 0.0
-                for (px in statusPixels) sum += ColorUtils.calculateLuminance(px or (0xFF shl 24))
+                var rs = 0
+                var gs = 0
+                var bs = 0
+                for (px in statusPixels) {
+                    sum += ColorUtils.calculateLuminance(px or (0xFF shl 24))
+                    rs += Color.red(px)
+                    gs += Color.green(px)
+                    bs += Color.blue(px)
+                }
+                // a lap állapotsorának mostani kinézete (átlagszín): lapozáskor ebből indul / ide érkezik
+                val n = statusPixels.size
+                if (!overviewShown && !searchShown && !swipeBusy()) {
+                    activeTab?.statusAvg = Color.rgb(rs / n, gs / n, bs / n)
+                }
                 val lum = sum / statusPixels.size
                 val prev = statusBright
                 // hiszterézis: ne villogjon a határon
@@ -7245,9 +7262,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     /** A lap állapotsor mögötti (tömör) színe, ha ismert; 0, ha ott elmosott tartalom van. */
     private fun statusColorOf(t: Tab): Int {
-        // Csak a lap tetején van tömör szín az állapotsor mögött; legörgetett lapnál ott
-        // elmosott tartalom van (a fejléc színe ilyenkor nem villanhat fel).
-        if (effScroll(t) >= statusTop) return 0
+        // Legörgetett lapnál az állapotsor mögött elmosott tartalom van: a legutóbb ott mért
+        // átlagszín (a fejléc színe ilyenkor nem villanhat fel).
+        if (effScroll(t) >= statusTop) return t.statusAvg
         val c = when {
             t.fixedHeader && t.headerColor != 0 -> t.headerColor
             else -> t.padColor
@@ -7546,6 +7563,31 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             // az állapotsor ikonjai a lap ismert színéből azonnal (nem várják meg a mérést)
             val c = statusColorOf(to)
             if (c != 0) statusBright = ColorUtils.calculateLuminance(c) > 0.5
+            if (keepColor != 0 && effScroll(to) >= statusTop) {
+                // legörgetett lap: a végszín lágyan átadja a helyét a valódi elmosásnak
+                swOldColor = keepColor
+                swNewColor = 0
+                swipeP = 0f
+                swActive = true
+                val token = ++swHoldToken
+                val fa = ValueAnimator.ofFloat(0f, 1f)
+                fa.duration = 260L
+                fa.addUpdateListener {
+                    if (token == swHoldToken && swipeFrom == null) {
+                        swipeP = (it.animatedValue as Float) / (if (tabSwipeStyle() == "blur") 1.2f else 1f)
+                        updateLens()
+                    }
+                }
+                fa.addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        if (token == swHoldToken && swipeFrom == null) {
+                            swActive = false
+                            updateLens()
+                        }
+                    }
+                })
+                fa.start()
+            } else
             // amíg az új lap állapotsorát meg nem méri, az átmenet végszíne marad (nincs villanás)
             if (keepColor != 0 && to.padColor == 0 && !to.fixedHeader) {
                 swOldColor = keepColor

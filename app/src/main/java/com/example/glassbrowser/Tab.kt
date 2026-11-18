@@ -14,6 +14,8 @@ class Tab(val webView: GlassWebView) {
     /** Újraindításkor visszaállított lap: csak akkor töltjük be, ha kiválasztják. */
     var pendingUrl: String? = null
     var thumbnail: Bitmap? = null
+    /** Az állapotsor mögötti rész átlagszíne, legutóbb mérve (lapváltó átmenethez). */
+    var statusAvg: Int = 0
     var favicon: Bitmap? = null
     /** Igaz, amíg egy címsorból indított betöltés tart: ilyenkor nem dobjuk át más alkalmazásba. */
     var stayInBrowser: Boolean = false

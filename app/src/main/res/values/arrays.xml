@@ -124,4 +124,22 @@
         <item>band</item>
         <item>flow</item>
     </string-array>
+    <string-array name="tab_swipe_names">
+        <item>Lapozás (mint egy könyv)</item>
+        <item>Csúszás</item>
+        <item>Elhalványulás</item>
+        <item>Elmosódó átmenet</item>
+        <item>Kocka</item>
+        <item>Nagyítás</item>
+        <item>Kártyapakli</item>
+    </string-array>
+    <string-array name="tab_swipe_values">
+        <item>page</item>
+        <item>slide</item>
+        <item>fade</item>
+        <item>blur</item>
+        <item>cube</item>
+        <item>zoom</item>
+        <item>deck</item>
+    </string-array>
 </resources>

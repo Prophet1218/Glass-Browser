@@ -371,10 +371,9 @@ class MainActivity : AppCompatActivity() {
             pl.onSwipeMove = { dx -> if (!barOverview && !overviewShown) swipeTabFollow(dx) }
             pl.onSwipe = { dx, commit ->
                 if (barOverview || overviewShown) {
-                    activeWebView?.translationX = 0f
+                    activeWebView?.let { resetSwipeFx(it) }
                 } else if (!commit) {
-                    activeWebView?.animate()?.translationX(0f)?.setDuration(380)
-                        ?.setInterpolator(OvershootInterpolator(2f))?.start()
+                    cancelTabSwipe()
                 } else {
                     swipeToTab(if (dx < 0f) 1 else -1)
                 }
@@ -996,6 +995,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     ox + px + (r.right - px) * sc, oy + py + (r.bottom - py) * sc,
                     rad * sc, panelBlur, menuGlassAlpha
                 )
+            } else if ((pagePopup ?: pagePopupFading)?.let { it.alpha > 0.02f && it.width > 0 } == true) {
+                // a weboldalon hosszan nyomott link / kép üveg menüje
+                val pp = (pagePopup ?: pagePopupFading)!!
+                visualRect(pp, tmpRect)
+                l.setSlot(
+                    SLOT_MENU, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
+                    dp(24) * pp.scaleX, panelBlur, pp.alpha
+                )
             } else {
                 l.clearSlot(SLOT_MENU)
             }
@@ -1009,6 +1016,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 l.setSlot(
                     SLOT_SUGGEST, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
                     tmpRect.height() / 2f, lensBlur, tb.alpha
+                )
+            } else if ((topTool ?: topToolFading)?.let { it.alpha > 0.02f && it.width > 0 } == true) {
+                // keresés az oldalon / szövegméret kapszula
+                val tt = (topTool ?: topToolFading)!!
+                visualRect(tt, tmpRect)
+                l.setSlot(
+                    SLOT_SUGGEST, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
+                    tmpRect.height() / 2f, lensBlur, tt.alpha
                 )
             } else {
                 l.clearSlot(SLOT_SUGGEST)
@@ -5689,10 +5704,6 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         menuRow(L.t("Letöltések"), icon = R.drawable.ic_m_download) {
             snapBackdrop { startActivity(Intent(this, DownloadsActivity::class.java)) }
         }
-        // olvasó nézet és olvasási lista (lásd Reader.kt, ReadingList.kt)
-        menuRow(L.t("Olvasó nézet"), canMark, icon = R.drawable.ic_m_reader) { openReader() }
-        menuRow(L.t("Hozzáadás az olvasási listához"), canMark, icon = R.drawable.ic_m_reading_add) { addToReadingList() }
-        menuRow(L.t("Olvasási lista"), icon = R.drawable.ic_m_reading_list) { showReadingList() }
         val desktop = prefs.getBoolean("desktop_mode", false)
         menuRow(L.t("Asztali oldal"), icon = R.drawable.ic_m_desktop, check = desktop) {
             prefs.edit().putBoolean("desktop_mode", !desktop).apply()
@@ -5700,7 +5711,6 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         menuRow(L.t("Keresés az oldalon"), icon = R.drawable.ic_m_find) { showFindBar() }
         menuRow(L.t("Szövegméret"), icon = R.drawable.ic_m_textsize) { showTextSizeBar() }
-        menuRow(L.t("Megosztás"), icon = R.drawable.ic_m_share) { sharePage() }
         menuRow(L.t("Beállítások"), icon = R.drawable.ic_m_settings) { openSettings() }
         // Olvashatóság: az üveg alá enyhe dér kerül, a szöveg a világos / sötét módhoz igazodik
         // (így világos és sötét oldal fölött is mindig látszik).
@@ -6654,6 +6664,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private var lastPageTouchY = 0f
     private var pagePopup: LinearLayout? = null
     private var pagePopupCatcher: View? = null
+    private var pagePopupFading: LinearLayout? = null
 
     /** Link / kép hosszú nyomására üveg menü (mint a Safariban). Igaz, ha megjelent. */
     private fun onPageLongPress(tab: Tab): Boolean {
@@ -6788,9 +6799,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         box.alpha = 0f
         box.scaleX = 0.5f
         box.scaleY = 0.5f
-        box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(360)
-            .setInterpolator(OvershootInterpolator(1.4f)).start()
         pagePopup = box
+        box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(360)
+            .setInterpolator(OvershootInterpolator(1.4f))
+            .setUpdateListener { updateLens() }.start()
         pagePopupCatcher = catcher
     }
 
@@ -6802,12 +6814,22 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (immediate) {
             root.removeView(box)
             c?.let { root.removeView(it) }
+            updateLens()
             return
         }
         c?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction { root.removeView(c) }?.start()
+        // amíg elhalványul, a lens még rajzolja (pagePopup már null: ideiglenesen visszatesszük)
         box.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setDuration(180)
             .setInterpolator(DecelerateInterpolator())
-            .withEndAction { root.removeView(box) }.start()
+            .setUpdateListener {
+                if (pagePopup == null) pagePopupFading = box
+                updateLens()
+            }
+            .withEndAction {
+                if (pagePopupFading === box) pagePopupFading = null
+                root.removeView(box)
+                updateLens()
+            }.start()
     }
 
     // ---------------------------------------------------------------- megosztás
@@ -6833,10 +6855,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     // (keresés az oldalon / szövegméret): az állapotsor alatt lebegő üvegkapszula
 
     private var topTool: LinearLayout? = null
+    private var topToolFading: LinearLayout? = null
     private var findField: EditText? = null
 
     private fun newTopTool(): LinearLayout {
         hideTopTool(immediate = true)
+        // a fordító kapszula helyén jelenik meg (ugyanaz az üvegfelület)
+        hideTranslateBar()
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
@@ -6851,9 +6876,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         bar.alpha = 0f
         bar.translationY = -dp(16).toFloat()
         bar.scaleX = 0.9f
-        bar.animate().alpha(1f).translationY(0f).scaleX(1f).setDuration(380)
-            .setInterpolator(OvershootInterpolator(1.3f)).start()
         topTool = bar
+        bar.animate().alpha(1f).translationY(0f).scaleX(1f).setDuration(380)
+            .setInterpolator(OvershootInterpolator(1.3f))
+            .setUpdateListener { updateLens() }.start()
         return bar
     }
 
@@ -6900,11 +6926,18 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         activeWebView?.clearMatches()
         if (immediate) {
             root.removeView(bar)
+            updateLens()
             return
         }
+        topToolFading = bar
         bar.animate().alpha(0f).translationY(-dp(12).toFloat()).scaleX(0.92f).setDuration(200)
             .setInterpolator(DecelerateInterpolator())
-            .withEndAction { root.removeView(bar) }.start()
+            .setUpdateListener { updateLens() }
+            .withEndAction {
+                if (topToolFading === bar) topToolFading = null
+                root.removeView(bar)
+                updateLens()
+            }.start()
     }
 
     /** Keresés az oldalon: szövegmező, találatszám, fel / le, bezárás. */
@@ -7012,43 +7045,206 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     // ---------------------------------------------------------------- lapváltás a keresősávon
 
-    /** A keresősávot oldalra húzva az előző / következő lapra vált (mint a Safariban). */
+    /**
+     * A keresősávot oldalra húzva az előző / következő lapra vált (mint a Safariban). Az átmenet
+     * a beállításokban választható (tab_swipe_anim): csúszás, elhalványulás, elmosás, lapozás
+     * (mint egy könyv lapja), kocka, nagyítás, kártyapakli.
+     */
+    private fun tabSwipeStyle(): String = prefs.getString("tab_swipe_anim", "page") ?: "page"
+
+    private var tabSwipeAnim: ValueAnimator? = null
+    /** Húzás közben elért haladás (az elengedéskor innen folytatódik). */
+    private var swipeDragP = 0f
+    private var swipeDragDir = 0
+
+    /** Mindkét lap állapota a [p] haladásnál (0 = régi lap, 1 = új lap a helyén). */
+    private fun tabSwipeFx(old: View, new: View?, p: Float, dir: Int, style: String) {
+        val w = contentContainer.width.toFloat().coerceAtLeast(1f)
+        val dist = 12000f * resources.displayMetrics.density
+        fun blur(v: View, r: Float) {
+            if (Build.VERSION.SDK_INT >= 31) {
+                v.setRenderEffect(if (r < 0.5f) null else android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP))
+            }
+        }
+        when (style) {
+            "fade" -> {
+                old.alpha = 1f - p
+                old.translationX = -dir * w * 0.06f * p
+                new?.let { it.alpha = p; it.translationX = dir * w * 0.06f * (1f - p) }
+            }
+            "blur" -> {
+                val r = dp(36).toFloat()
+                old.alpha = (1f - p * 1.1f).coerceIn(0f, 1f)
+                old.scaleX = 1f - 0.05f * p
+                old.scaleY = old.scaleX
+                blur(old, r * p)
+                new?.let {
+                    it.alpha = (p * 1.2f).coerceIn(0f, 1f)
+                    it.scaleX = 1.05f - 0.05f * p
+                    it.scaleY = it.scaleX
+                    blur(it, r * (1f - p))
+                }
+            }
+            "page" -> {
+                // könyvlapozás: a felső lap a gerince (bal szél) körül fordul át; előre lapozáskor
+                // a régi lap fordul el, visszafelé az új lap fordul vissza a régi fölé
+                if (dir > 0) {
+                    old.cameraDistance = dist
+                    old.pivotX = 0f
+                    old.pivotY = old.height / 2f
+                    old.rotationY = -100f * p
+                    old.alpha = if (p > 0.85f) (1f - (p - 0.85f) / 0.15f) else 1f
+                    new?.let {
+                        it.alpha = 0.55f + 0.45f * p
+                        it.scaleX = 0.94f + 0.06f * p
+                        it.scaleY = it.scaleX
+                    }
+                } else {
+                    old.alpha = 1f - 0.45f * p
+                    old.scaleX = 1f - 0.06f * p
+                    old.scaleY = old.scaleX
+                    new?.let {
+                        it.cameraDistance = dist
+                        it.pivotX = 0f
+                        it.pivotY = it.height / 2f
+                        it.rotationY = -100f * (1f - p)
+                        it.alpha = if (p < 0.15f) p / 0.15f else 1f
+                    }
+                }
+            }
+            "cube" -> {
+                old.cameraDistance = dist
+                old.pivotX = if (dir > 0) w else 0f
+                old.pivotY = old.height / 2f
+                old.rotationY = -dir * 90f * p
+                old.translationX = -dir * w * p
+                new?.let {
+                    it.cameraDistance = dist
+                    it.pivotX = if (dir > 0) 0f else w
+                    it.pivotY = it.height / 2f
+                    it.rotationY = dir * 90f * (1f - p)
+                    it.translationX = dir * w * (1f - p)
+                }
+            }
+            "zoom" -> {
+                old.alpha = 1f - p
+                old.scaleX = 1f - 0.18f * p
+                old.scaleY = old.scaleX
+                new?.let {
+                    it.alpha = p
+                    it.scaleX = 1.18f - 0.18f * p
+                    it.scaleY = it.scaleX
+                }
+            }
+            "deck" -> {
+                // kártyapakli: az új lap ráúszik, a régi hátracsúszik és elsötétül
+                old.scaleX = 1f - 0.08f * p
+                old.scaleY = old.scaleX
+                old.alpha = 1f - 0.5f * p
+                old.translationX = -dir * w * 0.06f * p
+                new?.let { it.translationX = dir * w * (1f - p); it.alpha = 1f }
+            }
+            else -> { // "slide"
+                old.translationX = -dir * w * 0.3f * p
+                old.alpha = 1f - 0.4f * p
+                new?.let { it.translationX = dir * w * (1f - p); it.alpha = 1f }
+            }
+        }
+    }
+
+    private fun resetSwipeFx(v: View) {
+        v.translationX = 0f
+        v.alpha = 1f
+        v.scaleX = 1f
+        v.scaleY = 1f
+        v.rotationY = 0f
+        v.pivotX = v.width / 2f
+        v.pivotY = v.height / 2f
+        if (Build.VERSION.SDK_INT >= 31) v.setRenderEffect(null)
+    }
+
     private fun swipeToTab(dir: Int) {
         val cur = activeTab ?: return
         val idx = tabs.indexOf(cur)
         val next = tabs.getOrNull(idx + dir)
-        val w = contentContainer.width.toFloat().coerceAtLeast(1f)
         val ow = cur.webView
+        val style = tabSwipeStyle()
+        tabSwipeAnim?.cancel()
         if (next == null || overviewShown || overviewBusy) {
             // nincs több lap arra: gumiszerű visszarugózás
-            ow.animate().cancel()
-            ow.animate().translationX(0f).setDuration(380).setInterpolator(OvershootInterpolator(2f)).start()
+            cancelTabSwipe()
             return
         }
         haptic()
+        val from = if (swipeDragDir == dir) swipeDragP else 0f
+        swipeDragP = 0f
+        swipeDragDir = 0
         selectTab(next, animate = true)
         val nw = next.webView
         nw.animate().cancel()
-        nw.alpha = 1f
-        nw.scaleX = 1f
-        nw.scaleY = 1f
-        nw.translationX = dir * w
         ow.animate().cancel()
-        ow.animate().translationX(-dir * w * 0.3f).alpha(0.6f).setDuration(380)
-            .setInterpolator(DecelerateInterpolator(1.8f)).start()
-        nw.animate().translationX(0f).setDuration(380).setInterpolator(DecelerateInterpolator(1.8f))
-            .withEndAction {
-                ow.translationX = 0f
-                ow.alpha = 1f
+        resetSwipeFx(nw)
+        // lapozásnál előre a régi lap van felül (az fordul el), visszafelé az új
+        if (style == "page" && dir > 0) ow.bringToFront()
+        if (style == "deck") nw.bringToFront()
+        tabSwipeFx(ow, nw, from, dir, style)
+        val a = ValueAnimator.ofFloat(from, 1f)
+        a.duration = when (style) {
+            "page", "cube" -> 520L
+            "blur" -> 420L
+            else -> 380L
+        }
+        a.interpolator = if (style == "page") android.view.animation.PathInterpolator(0.3f, 0.1f, 0.2f, 1f)
+        else DecelerateInterpolator(1.8f)
+        a.addUpdateListener { tabSwipeFx(ow, nw, it.animatedValue as Float, dir, style) }
+        a.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                resetSwipeFx(ow)
+                resetSwipeFx(nw)
+                nw.bringToFront()
                 removeInactiveWebViews()
-            }.start()
+                updateLens()
+            }
+        })
+        tabSwipeAnim = a
+        a.start()
     }
 
-    /** Húzás közben a lap kicsit követi az ujjat. */
-    private fun swipeTabFollow(dx: Float) {
+    /** Elengedés a küszöb előtt: a lap visszaáll. */
+    private fun cancelTabSwipe() {
         val wv = activeWebView ?: return
+        val style = tabSwipeStyle()
+        val from = swipeDragP
+        val dir = if (swipeDragDir == 0) 1 else swipeDragDir
+        swipeDragP = 0f
+        swipeDragDir = 0
+        tabSwipeAnim?.cancel()
+        val a = ValueAnimator.ofFloat(from, 0f)
+        a.duration = 380L
+        a.interpolator = OvershootInterpolator(1.6f)
+        a.addUpdateListener { tabSwipeFx(wv, null, (it.animatedValue as Float).coerceAtLeast(0f), dir, style) }
+        a.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) = resetSwipeFx(wv)
+        })
+        tabSwipeAnim = a
+        a.start()
+    }
+
+    /** Húzás közben a lap az átmenet első részét követi (ha arra van még lap). */
+    private fun swipeTabFollow(dx: Float) {
+        val cur = activeTab ?: return
+        val wv = cur.webView
+        val dir = if (dx < 0f) 1 else -1
+        val has = tabs.getOrNull(tabs.indexOf(cur) + dir) != null
+        tabSwipeAnim?.cancel()
         wv.animate().cancel()
-        wv.translationX = dx * 0.35f
+        val w = contentContainer.width.toFloat().coerceAtLeast(1f)
+        // a szélső lapnál csak enyhén enged (gumi)
+        val p = (kotlin.math.abs(dx) / w * (if (has) 0.7f else 0.12f)).coerceIn(0f, 0.45f)
+        if (swipeDragDir != 0 && swipeDragDir != dir) resetSwipeFx(wv)
+        swipeDragDir = dir
+        swipeDragP = p
+        tabSwipeFx(wv, null, p, dir, tabSwipeStyle())
     }
 
     companion object {

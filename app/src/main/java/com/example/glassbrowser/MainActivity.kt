@@ -877,14 +877,6 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 return
             }
 
-            // a lapcsoport kapszula a lapváltóval együtt jelenik meg / halványul
-            groupCapsule?.let { gc ->
-                val show = overview.visibility == View.VISIBLE && !privateMode
-                val a = if (show) overview.alpha * tabList.alpha else 0f
-                val v = if (show && a > 0.01f) View.VISIBLE else View.GONE
-                if (gc.visibility != v) gc.visibility = v
-                if (gc.alpha != a) gc.alpha = a
-            }
             // felső elmosás; a lapváltó nyitásakor / zárásakor finoman halványul ki / be (topVis)
             val vis = topVis
             // (a térköz kitöltése akkor is él, ha az elmosás épp ki van halványítva: különben a lapváltó
@@ -2858,6 +2850,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         showDock(animate = false)
         hideMenu()
         releaseFocus()
+        showGroupCapsule()
         setCollapsed(false)
         overviewBusy = true
         captureSnapshot(tab) {
@@ -2919,6 +2912,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (!overviewShown || overviewBusy) return
         val tab = target ?: return
         overviewBusy = true
+        hideGroupCapsule()
         tabList.scaleX = 1f
         tabList.scaleY = 1f
         val card = if (zoom) cardRect(tab) else null
@@ -2977,6 +2971,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
             return
         }
         overviewBusy = true
+        hideGroupCapsule()
         overviewAnim?.cancel()
         // az új kártya a rácsban rejtve marad (nem villan fel üres kártya)
         heroTab = tab
@@ -5417,6 +5412,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         // lencse valódi üveget rajzol
         root.addView(tv, lp)
         tv.visibility = View.GONE
+        tv.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateLens() }
         groupCapsule = tv
         // hosszú nyomás a kártyán: áthelyezés másik csoportba
         tabList.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
@@ -5439,6 +5435,39 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         updateGroupCapsule()
     }
 
+    /** A lapváltó nyitásakor beúszik (a lencse üvege alatta együtt mozog). */
+    private fun showGroupCapsule() {
+        val gc = groupCapsule ?: return
+        if (privateMode) {
+            gc.visibility = View.GONE
+            return
+        }
+        gc.animate().cancel()
+        gc.visibility = View.VISIBLE
+        gc.alpha = 0f
+        gc.scaleX = 0.8f
+        gc.scaleY = 0.8f
+        gc.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(120L).setDuration(320L)
+            .setInterpolator(OvershootInterpolator(1.6f))
+            .setUpdateListener { updateLens() }
+            .withEndAction { updateLens() }.start()
+    }
+
+    /** Amint egy lap elindul a teljes kijelző felé, a kapszula már el is tűnik. */
+    private fun hideGroupCapsule() {
+        val gc = groupCapsule ?: return
+        groupPopup?.dismissNow()
+        if (gc.visibility != View.VISIBLE) return
+        gc.animate().cancel()
+        gc.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setStartDelay(0L).setDuration(150L)
+            .setInterpolator(DecelerateInterpolator())
+            .setUpdateListener { updateLens() }
+            .withEndAction {
+                gc.visibility = View.GONE
+                updateLens()
+            }.start()
+    }
+
     /** A kapszula helye: a rács fölött (a rács ennyivel lejjebb kezdődik, lásd applyLayoutInsets). */
     private fun layoutGroupCapsule(webTopY: Int) {
         val tv = groupCapsule ?: return
@@ -5452,7 +5481,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun updateGroupCapsule() {
         val tv = groupCapsule ?: return
-        // (láthatóság: a lencse frissítése követi a lapváltót, lásd updateLensNow)
+        if (privateMode) tv.visibility = View.GONE
+        else if (overviewShown && !overviewBusy && tv.visibility != View.VISIBLE) showGroupCapsule()
         updateLens()
         tv.text = if (groupSel.isEmpty()) L.t("Minden lap") else groupSel
         val col = menuTextColor()
@@ -5475,7 +5505,19 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun newGlassPopup(): GlassPopup {
         groupPopup?.dismissNow()
-        return GlassPopup(glassUi()).also { groupPopup = it }
+        val p = GlassPopup(glassUi())
+        groupPopup = p
+        // amíg a felugró üveglap látszik (és nyílik / záródik), minden képkockán frissül a lencse
+        val pump = object : Runnable {
+            override fun run() {
+                if (groupPopup !== p) return
+                updateLens()
+                if (p.cardView != null) root.postOnAnimation(this)
+                else updateLens()
+            }
+        }
+        root.postOnAnimation(pump)
+        return p
     }
 
     /** A kapszulára koppintva: Minden lap, a csoportok, Új csoport…, Csoport törlése. */
@@ -7148,15 +7190,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
     }
 
-    /** A haladás, ahogy a szem látja: az átmenet közepén vált a legtöbbet (az oldal is ott). */
-    private fun swipeVisualP(p: Float): Float {
-        val (e0, e1) = when (tabSwipeStyle()) {
-            "blur", "fade", "zoom" -> 0.25f to 0.7f
-            "page" -> 0.15f to 0.8f
-            else -> 0f to 1f
-        }
-        val x = ((p - e0) / (e1 - e0)).coerceIn(0f, 1f)
-        return x * x * (3f - 2f * x)
+    /** A haladás, ahogy a szem látja: az új lap épp ennyire fedi a régit (a rajzolással egyezően). */
+    private fun swipeVisualP(p: Float): Float = when (tabSwipeStyle()) {
+        "blur" -> (p * 1.2f).coerceIn(0f, 1f)
+        else -> p.coerceIn(0f, 1f)
     }
 
     private fun swipeStatusColor(): Int {

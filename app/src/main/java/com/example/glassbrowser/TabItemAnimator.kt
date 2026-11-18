@@ -13,7 +13,7 @@ import kotlin.math.sqrt
  * [damping] a csillapítás (1 alatt van túllendülés), [stiffness] a rugó "sebessége" (a t = 1 végére
  * gyakorlatilag beáll; a maradékot az utolsó képkockán levágjuk).
  */
-class SpringInterpolator(
+class TabSpringInterpolator(
     private val damping: Float = 0.74f,
     private val stiffness: Float = 9.5f
 ) : TimeInterpolator {
@@ -34,7 +34,7 @@ class SpringInterpolator(
  * nem várják meg az eltávolítás végét.
  */
 class TabItemAnimator : DefaultItemAnimator() {
-    private val spring = SpringInterpolator()
+    private val spring = TabSpringInterpolator()
 
     init {
         moveDuration = 450

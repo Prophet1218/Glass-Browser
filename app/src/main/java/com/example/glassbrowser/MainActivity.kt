@@ -6486,7 +6486,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.getInsetsController(window, root).show(WindowInsetsCompat.Type.systemBars())
         box.animate().alpha(0f).setDuration(180).withEndAction {
-            box.removeAllViews()
+            (box as? ViewGroup)?.removeAllViews()
             root.removeView(box)
         }.start()
         try {

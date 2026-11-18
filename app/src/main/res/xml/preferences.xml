@@ -316,7 +316,7 @@
             app:showSeekBarValue="true" />
 
         <ListPreference
-            android:defaultValue="page"
+            android:defaultValue="blur"
             android:entries="@array/tab_swipe_names"
             android:entryValues="@array/tab_swipe_values"
             android:key="tab_swipe_anim"

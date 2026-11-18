@@ -633,7 +633,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
             Configuration.UI_MODE_NIGHT_YES
         val anim = sectionAnimator ?: SectionItemAnimator(requireContext()).also { sectionAnimator = it }
         listView.addItemDecoration(SectionCardDecoration(requireContext(), sections, anim, night))
-        listView.clipToPadding = false
+        // (clipToPadding: the soft fading edge ends exactly where the list ends; with false the
+        // padding area was drawn unfaded, a hard band above the navigation bar)
+        listView.clipToPadding = true
         listView.setPadding(
             listView.paddingLeft, listView.paddingTop, listView.paddingRight,
             listView.paddingBottom + (24 * resources.displayMetrics.density).toInt()

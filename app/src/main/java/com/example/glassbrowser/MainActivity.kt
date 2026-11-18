@@ -7073,8 +7073,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
      * a két lap között vált, a haladással arányosan.
      */
     private fun tabSwipeStyle(): String {
-        val st = prefs.getString("tab_swipe_anim", "page") ?: "page"
-        return if (st == "cube") "page" else st
+        val st = prefs.getString("tab_swipe_anim", "blur") ?: "blur"
+        return if (st == "cube") "blur" else st
     }
 
     private var tabSwipeAnim: ValueAnimator? = null
@@ -7280,8 +7280,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     /** Húzás közben az egész átmenet az ujjat követi. */
     private fun swipeTabFollow(dx: Float) {
         if (overviewShown || overviewBusy) return
+        // gyors egymás utáni lapozás: az előző váltás azonnal befejeződik (a lap és az
+        // állapotsor is átvált), és az új húzás már onnan indul
+        if (tabSwipeAnim?.isRunning == true) tabSwipeAnim?.end()
         val cur = activeTab ?: return
-        tabSwipeAnim?.cancel()
         val dir = if (dx < 0f) 1 else -1
         val has = beginSwipe(dir)
         val w = contentContainer.width.toFloat().coerceAtLeast(1f)
@@ -7354,6 +7356,9 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         runSwipe(1f) {
             endSwipeState()
             selectTab(to, animate = false)
+            // az állapotsor ikonjai a lap ismert színéből azonnal (nem várják meg a mérést)
+            val c = statusColorOf(to)
+            if (c != 0) statusBright = ColorUtils.calculateLuminance(c) > 0.5
             // az új lap állapotsora: a lap saját színével azonnal (a mérés később pontosít)
             updateLens()
         }

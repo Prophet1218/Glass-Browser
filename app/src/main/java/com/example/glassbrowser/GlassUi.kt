@@ -58,7 +58,8 @@ class GlassUi(
     fun surface(radius: Float, owned: MutableList<Drawable>): Drawable {
         val frost = GradientDrawable().apply {
             cornerRadius = radius
-            setColor(if (dark) Color.argb(226, 30, 32, 38) else Color.argb(236, 248, 249, 251))
+            // the real glass (blur + refraction) is drawn below by the lens: only a light frost
+            setColor(if (dark) Color.argb(110, 30, 32, 38) else Color.argb(130, 248, 249, 251))
         }
         val skin = makeGlass(radius)
         owned.add(skin)
@@ -141,6 +142,8 @@ class GlassPopup(private val ui: GlassUi) {
     private var closing = false
 
     val isShowing: Boolean get() = scrim != null
+    /** A látható üveglap (a MainActivity lencséje rajzolja alá a valódi üveget). */
+    val cardView: View? get() = card
 
     /** Lista megjelenítése a [anchor] téglalap (a host koordinátáiban) alatt vagy fölött. */
     fun show(anchor: RectF, title: String?, items: List<Item>) {

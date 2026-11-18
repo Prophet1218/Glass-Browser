@@ -877,6 +877,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 return
             }
 
+            // a lapcsoport kapszula a lapváltóval együtt jelenik meg / halványul
+            groupCapsule?.let { gc ->
+                val show = overview.visibility == View.VISIBLE && !privateMode
+                val a = if (show) overview.alpha * tabList.alpha else 0f
+                val v = if (show && a > 0.01f) View.VISIBLE else View.GONE
+                if (gc.visibility != v) gc.visibility = v
+                if (gc.alpha != a) gc.alpha = a
+            }
             // felső elmosás; a lapváltó nyitásakor / zárásakor finoman halványul ki / be (topVis)
             val vis = topVis
             // (a térköz kitöltése akkor is él, ha az elmosás épp ki van halványítva: különben a lapváltó
@@ -1004,6 +1012,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                     ox + px + (r.right - px) * sc, oy + py + (r.bottom - py) * sc,
                     rad * sc, panelBlur, menuGlassAlpha
                 )
+            } else if (groupPopup?.cardView?.let { it.alpha > 0.02f && it.width > 0 && it.isAttachedToWindow } == true) {
+                // lapcsoport választó / áthelyezés felugró üveglapja
+                val gp = groupPopup!!.cardView!!
+                visualRect(gp, tmpRect)
+                l.setSlot(
+                    SLOT_MENU, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
+                    dp(22) * gp.scaleX, panelBlur, gp.alpha
+                )
             } else if ((pagePopup ?: pagePopupFading)?.let { it.alpha > 0.02f && it.width > 0 } == true) {
                 // a weboldalon hosszan nyomott link / kép üveg menüje
                 val pp = (pagePopup ?: pagePopupFading)!!
@@ -1025,6 +1041,14 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 l.setSlot(
                     SLOT_SUGGEST, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
                     tmpRect.height() / 2f, lensBlur, tb.alpha
+                )
+            } else if (groupCapsule?.let { it.visibility == View.VISIBLE && it.alpha > 0.02f && it.width > 0 } == true) {
+                // lapváltó: a lapcsoport kapszula üvege
+                val gc = groupCapsule!!
+                visualRect(gc, tmpRect)
+                l.setSlot(
+                    SLOT_SUGGEST, tmpRect.left, tmpRect.top, tmpRect.right, tmpRect.bottom,
+                    tmpRect.height() / 2f, lensBlur, gc.alpha
                 )
             } else if ((topTool ?: topToolFading)?.let { it.alpha > 0.02f && it.width > 0 } == true) {
                 // keresés az oldalon / szövegméret kapszula
@@ -2922,6 +2946,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         runOverview(false, tab, card) {
             overview.visibility = View.GONE
+            groupCapsule?.visibility = View.GONE
             overviewBg.setImageBitmap(null)
             overviewShown = false
             overviewBusy = false
@@ -3037,6 +3062,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
             override fun onAnimationEnd(animation: Animator) {
                 overview.visibility = View.GONE
+                groupCapsule?.visibility = View.GONE
                 overviewBg.setImageBitmap(null)
                 tabList.scaleX = 1f
                 tabList.scaleY = 1f
@@ -5387,7 +5413,10 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         tv.setOnClickListener { showGroupMenu() }
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
         lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        overview.addView(tv, lp)
+        // a lencse fölött (nem a lapváltóban): így a felső elmosás nem megy rá, alá pedig a
+        // lencse valódi üveget rajzol
+        root.addView(tv, lp)
+        tv.visibility = View.GONE
         groupCapsule = tv
         // hosszú nyomás a kártyán: áthelyezés másik csoportba
         tabList.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
@@ -5423,7 +5452,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     private fun updateGroupCapsule() {
         val tv = groupCapsule ?: return
-        tv.visibility = if (privateMode) View.GONE else View.VISIBLE
+        // (láthatóság: a lencse frissítése követi a lapváltót, lásd updateLensNow)
+        updateLens()
         tv.text = if (groupSel.isEmpty()) L.t("Minden lap") else groupSel
         val col = menuTextColor()
         tv.setTextColor(col)
@@ -7087,18 +7117,52 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     private var swOldColor = 0
     private var swNewColor = 0
     private var turnShade: View? = null
+    private var swHoldToken = 0
 
     /** A lap állapotsor mögötti (tömör) színe, ha ismert; 0, ha ott elmosott tartalom van. */
-    private fun statusColorOf(t: Tab): Int = when {
-        t.fixedHeader && t.headerColor != 0 -> t.headerColor
-        effScroll(t) < statusTop -> t.padColor
-        else -> 0
+    private fun statusColorOf(t: Tab): Int {
+        val c = when {
+            t.fixedHeader && t.headerColor != 0 -> t.headerColor
+            effScroll(t) < statusTop -> t.padColor
+            else -> 0
+        }
+        if (c != 0) return c
+        // ismeretlen (pl. legörgetett lap): a lap utolsó képének legfelső sora
+        val bm = t.thumbnail ?: return 0
+        return try {
+            if (bm.isRecycled || bm.config == Bitmap.Config.HARDWARE || bm.width < 4 || bm.height < 4) 0
+            else {
+                var r = 0
+                var g = 0
+                var b = 0
+                for (i in 1..5) {
+                    val px = bm.getPixel(bm.width * i / 6, 1)
+                    r += Color.red(px)
+                    g += Color.green(px)
+                    b += Color.blue(px)
+                }
+                Color.rgb(r / 5, g / 5, b / 5)
+            }
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** A haladás, ahogy a szem látja: az átmenet közepén vált a legtöbbet (az oldal is ott). */
+    private fun swipeVisualP(p: Float): Float {
+        val (e0, e1) = when (tabSwipeStyle()) {
+            "blur", "fade", "zoom" -> 0.25f to 0.7f
+            "page" -> 0.15f to 0.8f
+            else -> 0f to 1f
+        }
+        val x = ((p - e0) / (e1 - e0)).coerceIn(0f, 1f)
+        return x * x * (3f - 2f * x)
     }
 
     private fun swipeStatusColor(): Int {
         val a = swOldColor
         val b = swNewColor
-        val p = swipeP.coerceIn(0f, 1f)
+        val p = swipeVisualP(swipeP.coerceIn(0f, 1f))
         return when {
             a != 0 && b != 0 -> ColorUtils.blendARGB(a, b, p)
             a != 0 -> ColorUtils.setAlphaComponent(a, (255 * (1f - p)).toInt())
@@ -7267,6 +7331,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         removeTurnShade()
         resetSwipeFx(cur.webView)
+        swHoldToken++
         swipeFrom = cur
         swipeTo = to
         swipeDir = dir
@@ -7354,11 +7419,26 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
         haptic()
         runSwipe(1f) {
+            val keepColor = swNewColor
             endSwipeState()
             selectTab(to, animate = false)
             // az állapotsor ikonjai a lap ismert színéből azonnal (nem várják meg a mérést)
             val c = statusColorOf(to)
             if (c != 0) statusBright = ColorUtils.calculateLuminance(c) > 0.5
+            // amíg az új lap állapotsorát meg nem méri, az átmenet végszíne marad (nincs villanás)
+            if (keepColor != 0 && to.padColor == 0 && !to.fixedHeader) {
+                swOldColor = keepColor
+                swNewColor = keepColor
+                swipeP = 1f
+                swActive = true
+                val token = ++swHoldToken
+                handler.postDelayed({
+                    if (token == swHoldToken && swipeFrom == null) {
+                        swActive = false
+                        updateLens()
+                    }
+                }, 450L)
+            }
             // az új lap állapotsora: a lap saját színével azonnal (a mérés később pontosít)
             updateLens()
         }

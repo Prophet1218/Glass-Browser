@@ -633,13 +633,23 @@ class SettingsFragment : PreferenceFragmentCompat() {
             Configuration.UI_MODE_NIGHT_YES
         val anim = sectionAnimator ?: SectionItemAnimator(requireContext()).also { sectionAnimator = it }
         listView.addItemDecoration(SectionCardDecoration(requireContext(), sections, anim, night))
-        // (clipToPadding: the soft fading edge ends exactly where the list ends; with false the
-        // padding area was drawn unfaded, a hard band above the navigation bar)
+        // No bottom padding at all: the space under the last card is an item offset instead, so
+        // the list (and its soft fading edge) ends exactly at its own bottom edge, above the
+        // navigation bar. (With padding the fade stopped above an unfaded band.)
         listView.clipToPadding = true
-        listView.setPadding(
-            listView.paddingLeft, listView.paddingTop, listView.paddingRight,
-            listView.paddingBottom + (24 * resources.displayMetrics.density).toInt()
-        )
+        listView.setPadding(listView.paddingLeft, listView.paddingTop, listView.paddingRight, 0)
+        val gapPx = (28 * resources.displayMetrics.density).toInt()
+        listView.addItemDecoration(object : androidx.recyclerview.widget.RecyclerView.ItemDecoration() {
+            override fun getItemOffsets(
+                outRect: android.graphics.Rect, view: View,
+                parent: androidx.recyclerview.widget.RecyclerView,
+                state: androidx.recyclerview.widget.RecyclerView.State
+            ) {
+                val pos = parent.getChildAdapterPosition(view)
+                val n = parent.adapter?.itemCount ?: 0
+                outRect.set(0, 0, 0, if (n > 0 && pos == n - 1) gapPx else 0)
+            }
+        })
         // the list fades out softly at the top and bottom edges (no hard cut / blur band)
         listView.isVerticalFadingEdgeEnabled = true
         listView.setFadingEdgeLength((44 * resources.displayMetrics.density).toInt())

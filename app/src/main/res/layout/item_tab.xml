@@ -3,10 +3,10 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingStart="7dp"
-    android:paddingTop="7dp"
-    android:paddingEnd="7dp"
-    android:paddingBottom="9dp">
+    android:paddingStart="5dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="5dp"
+    android:paddingBottom="8dp">
 
     <!-- A lap képe: a magassága a szélességéhez igazodik -->
     <com.example.glassbrowser.AspectFrameLayout

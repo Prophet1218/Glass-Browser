@@ -154,13 +154,14 @@
         android:alpha="0"
         android:elevation="6dp">
 
+        <!-- a jel rajzát (PullRefreshDrawable) futás közben kapja: a teljes kört kitölti -->
         <ImageView
             android:id="@+id/pullIcon"
-            android:layout_width="22dp"
-            android:layout_height="22dp"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:layout_gravity="center"
-            android:importantForAccessibility="no"
-            android:src="@drawable/ic_reload" />
+            android:scaleType="fitXY"
+            android:importantForAccessibility="no" />
     </FrameLayout>
 
     <ProgressBar

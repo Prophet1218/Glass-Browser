@@ -12,8 +12,8 @@ import java.net.URLEncoder
 import java.util.Locale
 import kotlin.concurrent.thread
 
-/** Egy meglátogatott oldal. */
-class HistoryEntry(val url: String, var title: String, var time: Long)
+/** Egy meglátogatott oldal; [visits]: hányszor nyitották meg (a "Gyakran látogatott" listához). */
+class HistoryEntry(val url: String, var title: String, var time: Long, var visits: Int = 1)
 
 /**
  * Helyi böngészési előzmények (csak ezen a telefonon, egy fájlban). A keresősáv javaslataihoz
@@ -37,7 +37,7 @@ object HistoryStore {
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val url = o.optString("u")
-                if (url.isNotEmpty()) items.add(HistoryEntry(url, o.optString("t"), o.optLong("d")))
+                if (url.isNotEmpty()) items.add(HistoryEntry(url, o.optString("t"), o.optLong("d"), o.optInt("n", 1).coerceAtLeast(1)))
             }
         } catch (e: Exception) {
             // sérült fájl: üres előzményekkel indulunk
@@ -51,7 +51,10 @@ object HistoryStore {
         val idx = items.indexOfFirst { it.url == url }
         val entry = if (idx >= 0) items.removeAt(idx) else HistoryEntry(url, "", 0L)
         if (!title.isNullOrBlank()) entry.title = title
-        entry.time = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        // ugyanannak az oldalnak egy percen belüli újabb betöltése (átirányítás, frissítés) nem új látogatás
+        if (idx >= 0 && now - entry.time > 60_000L) entry.visits++
+        entry.time = now
         items.add(0, entry)
         while (items.size > MAX) items.removeAt(items.size - 1)
         dirty = true
@@ -85,6 +88,24 @@ object HistoryStore {
         return counts.entries.sortedByDescending { it.value }.take(limit).mapNotNull { first[it.key] }
     }
 
+    /**
+     * "Gyakran látogatott": a webhelyek a látogatások összege szerint (webhelyenként a legtöbbet
+     * megnyitott oldallal); az [exclude] webhelyei (pl. a csempék) kimaradnak.
+     */
+    fun frequentSites(limit: Int, exclude: Set<String> = emptySet()): List<HistoryEntry> {
+        val sums = HashMap<String, Int>()
+        val best = LinkedHashMap<String, HistoryEntry>()
+        for (e in items) {
+            val h = Urls.host(e.url)
+            if (!h.contains('.') || h in exclude) continue
+            sums[h] = (sums[h] ?: 0) + e.visits
+            val b = best[h]
+            if (b == null || e.visits > b.visits) best[h] = e
+        }
+        // azonos számnál a frissebb webhely marad elöl (a best sorrendje a legfrissebb látogatás szerinti)
+        return best.keys.sortedByDescending { sums[it] ?: 0 }.take(limit).mapNotNull { best[it] }
+    }
+
     /** Az előzmények listája a kereső felülethez: üres szűrővel a legutóbbiak. */
     fun list(query: String, limit: Int): List<HistoryEntry> =
         if (query.isBlank()) items.take(limit) else search(query, limit)
@@ -109,7 +130,7 @@ object HistoryStore {
         try {
             val arr = JSONArray()
             for (e in items) {
-                arr.put(JSONObject().put("u", e.url).put("t", e.title).put("d", e.time))
+                arr.put(JSONObject().put("u", e.url).put("t", e.title).put("d", e.time).put("n", e.visits))
             }
             File(context.applicationContext.filesDir, FILE).writeText(arr.toString())
         } catch (e: Exception) {

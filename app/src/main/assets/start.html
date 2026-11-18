@@ -14,6 +14,9 @@
     --tile: #eef0f5;
     --row: #ffffff;
     --accent: #0a84ff;
+    --glass: rgba(255, 255, 255, .62);
+    --glass-edge: rgba(255, 255, 255, .9);
+    --glass-shadow: 0 4px 14px rgba(20, 30, 60, .10);
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -25,6 +28,9 @@
       --box-border: rgba(255, 255, 255, .07);
       --tile: #232733;
       --row: #161920;
+      --glass: rgba(255, 255, 255, .07);
+      --glass-edge: rgba(255, 255, 255, .16);
+      --glass-shadow: 0 4px 16px rgba(0, 0, 0, .35);
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -95,6 +101,22 @@
   .item .t { font-size: 15px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .item .h { font-size: 12px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .hidden { display: none; }
+
+  /* Gyakran látogatott: kisebb, üveges ikonok a csempék stílusában */
+  .freq {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 8px; padding: 0 0 2px;
+  }
+  .freq .tile .ic {
+    width: 46px; height: 46px; border-radius: 14px;
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%);
+    box-shadow: inset 0 0 0 1px var(--glass-edge), inset 0 1px 0 var(--glass-edge), var(--glass-shadow);
+    color: var(--muted); font-size: 18px;
+  }
+  .freq .tile .ic img { width: 26px; height: 26px; border-radius: 6px; }
+  .freq .tile .name { font-size: 11.5px; margin-top: 6px; }
+  .freq.in .tile { animation: freqIn .42s cubic-bezier(.2, .9, .3, 1.15) both; }
+  @keyframes freqIn { from { opacity: 0; transform: translateY(6px) scale(.94); } to { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
@@ -111,6 +133,11 @@
 
 <div class="tiles" id="tiles"></div>
 <div class="hint" id="hint">Tartsd nyomva a csempét a szerkesztéshez</div>
+
+<div class="section hidden" id="freqBox">
+  <h2 id="freqTitle">Gyakran látogatott</h2>
+  <div class="freq" id="freq"></div>
+</div>
 
 <div class="section hidden" id="recentBox">
   <h2 id="recentTitle">Legutóbb megnyitott</h2>
@@ -226,6 +253,34 @@
     }
   }
 
+  // "Gyakran látogatott": legfeljebb 8 kis üveges ikon (a böngésző számolja az előzményekből)
+  var freqShown = false;
+  function renderFrequent(list, title) {
+    var wrap = document.getElementById("freqBox");
+    var box = document.getElementById("freq");
+    document.getElementById("freqTitle").textContent = title || T.frequent;
+    box.innerHTML = "";
+    if (!list || !list.length) { wrap.classList.add("hidden"); return; }
+    wrap.classList.remove("hidden");
+    // a beúszás csak az első megjelenéskor fut (a későbbi frissítéskor ne villanjon)
+    if (!freqShown) { box.classList.add("in"); freqShown = true; } else box.classList.remove("in");
+    list.slice(0, 8).forEach(function (t, i) {
+      var a = el("a", "tile"); a.href = t.url; a.draggable = false;
+      a.style.animationDelay = (i * 28) + "ms";
+      a.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+      a.addEventListener("dragstart", function (e) { e.preventDefault(); });
+      var ic = el("div", "ic");
+      var name = t.title || host(t.url);
+      ic.textContent = name.charAt(0).toUpperCase();
+      loadIcon(t.url, function (img) {
+        if (img) { ic.textContent = ""; ic.appendChild(img); }
+      });
+      var n = el("div", "name"); n.textContent = name;
+      a.appendChild(ic); a.appendChild(n);
+      box.appendChild(a);
+    });
+  }
+
   function renderRecent(list) {
     var wrap = document.getElementById("recentBox");
     var box = document.getElementById("recent");
@@ -250,13 +305,15 @@
   // A felület szövegei (a böngésző nyelvbeállítása szerint)
   var TEXT = {
     hu: { search: "Keresés vagy webcím", recent: "Legutóbb megnyitott", hint: "Tartsd nyomva a csempét a szerkesztéshez",
-          add: "Hozzáadás", reset: "Visszaállítás", title: "Új lap", maps: "Térkép" },
+          add: "Hozzáadás", reset: "Visszaállítás", title: "Új lap", maps: "Térkép",
+          frequent: "Gyakran látogatott" },
     en: { search: "Search or type URL", recent: "Recently opened", hint: "Press and hold a shortcut to edit it",
-          add: "Add", reset: "Reset", title: "New tab", maps: "Maps" }
+          add: "Add", reset: "Reset", title: "New tab", maps: "Maps",
+          frequent: "Frequently visited" }
   };
   var T = TEXT.hu;
 
-  // A böngésző hívja meg: { tiles: [{title,url}], recent: [{title,url}] }
+  // A böngésző hívja meg: { tiles: [{title,url}], frequent: [{title,url}], frequentTitle, recent: [{title,url}] }
   window.glassData = function (data) {
     T = TEXT[(data && data.lang) || "hu"] || TEXT.hu;
     document.documentElement.lang = (data && data.lang) || "hu";
@@ -279,6 +336,7 @@
       var r = el("a"); r.href = "glass://tile/reset"; r.textContent = T.reset;
       hint.appendChild(r);
     }
+    renderFrequent(data && data.frequent, data && data.frequentTitle);
     renderRecent(data && data.recent);
   };
 

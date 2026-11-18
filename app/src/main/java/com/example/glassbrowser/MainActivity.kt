@@ -322,14 +322,31 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val wv = activeWebView
+                val tab = activeTab
                 when {
+                    rowActions != null -> hideRowActions()
                     menuVisible -> hideMenu()
                     overviewShown -> hideOverview()
-                    urlField.hasFocus() -> releaseFocus()
-                    wv != null && wv.canGoBack() -> wv.goBack()
-                    else -> {
+                    searchShown || urlField.hasFocus() -> releaseFocus()
+                    // on the start page the next back gesture leaves the app
+                    wv != null && tab != null && Urls.isStart(wv.url ?: tab.url) -> {
                         isEnabled = false
                         onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
+                    }
+                    wv != null && wv.canGoBack() -> wv.goBack()
+                    // no more history in this tab (e.g. restored tab, link opened in a new tab):
+                    // one step back is the start page; only from there does back leave the app
+                    wv != null && tab != null -> {
+                        tab.stayInBrowser = true
+                        wv.loadUrl(START_URL)
+                    }
+                    else -> {
+                        // the callback stays enabled afterwards (the old code switched it off for
+                        // good, so every later back gesture closed the app)
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
                     }
                 }
             }

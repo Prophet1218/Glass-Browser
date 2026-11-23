@@ -1,4 +1,4 @@
-**Glass Browser 1.0.1** is a personal Android browser built on Chromium WebView. It has a Safari-inspired liquid glass interface.
+**Glass Browser 1.0.2** is a personal Android browser built on Chromium WebView. It has a Safari-inspired liquid glass interface.
 
 ### Interface
 - **Floating liquid glass search bar.** Real-time blur, edge refraction and an optional convex 3D look. A glow follows your finger, and the capsule stretches toward it.
@@ -34,6 +34,9 @@
 
 Requires Android 8.0 or newer. Some glass effects need Android 13 or newer.
 
-### What's new in 1.0.1
+### What's new in 1.0.2
+- Glass Browser now appears in other apps' "Open with" lists (for example links in YouTube video descriptions), including apps that only offer Custom Tabs browsers.
+
+### 1.0.1
 - Download notifications show the browser's own icon in the status bar, with progress and a "Download complete" notification that opens Downloads.
 - Downloaded files open in the matching app (correct file address and type), APKs can be installed.

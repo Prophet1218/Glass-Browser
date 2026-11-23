@@ -358,7 +358,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         restoreTabs()
-        intent?.dataString?.let { openNewTab(it, capture = false) }
+        incomingUrl(intent)?.let { openNewTab(it, capture = false) }
         applyAllSettings()
     }
 
@@ -7079,9 +7079,20 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     // ---------------------------------------------------------------- életciklus
 
+    /** Másik alkalmazásból kapott link (vagy webes keresés szövege). */
+    private fun incomingUrl(i: Intent?): String? {
+        if (i == null) return null
+        i.dataString?.takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let { return it }
+        if (i.action == Intent.ACTION_WEB_SEARCH) {
+            val q = i.getStringExtra(android.app.SearchManager.QUERY)?.trim().orEmpty()
+            if (q.isNotEmpty()) return resolveInput(q)
+        }
+        return i.dataString
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.dataString?.let { openNewTab(it) }
+        incomingUrl(intent)?.let { openNewTab(it) }
     }
 
     override fun onResume() {

@@ -50,6 +50,22 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
             </intent-filter>
+            <!-- weboldal típusú tartalom (néhány alkalmazás így keres böngészőt) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/xhtml+xml" />
+            </intent-filter>
+            <!-- webes keresés (pl. "Keresés a weben" más alkalmazásokból) -->
+            <intent-filter>
+                <action android:name="android.intent.action.WEB_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- Választható alkalmazásikonok: mindegyik egy "álnév" a főablakhoz, saját ikonnal.
@@ -384,5 +400,12 @@
             android:exported="false"
             android:label="Letöltések"
             android:theme="@style/Theme.GlassBrowser.Settings" />
+        <service
+            android:name=".GlassTabsService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.support.customtabs.action.CustomTabsService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

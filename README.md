@@ -1,4 +1,4 @@
-# Glass Browser 1.0.2
+# Glass Browser 1.0.3
 
 A personal Android browser with a Safari-inspired liquid glass interface, built on Chromium WebView.
 

@@ -1,4 +1,4 @@
-**Glass Browser 1.1.0** is a personal Android browser built on Chromium WebView. It has a Safari-inspired liquid glass interface.
+**Glass Browser 1.1.1** is a personal Android browser built on Chromium WebView. It has a Safari-inspired liquid glass interface.
 
 ### Interface
 - **Floating liquid glass search bar.** Real-time blur, edge refraction and an optional convex 3D look. A glow follows your finger, and the capsule stretches toward it.
@@ -34,8 +34,11 @@
 
 Requires Android 8.0 or newer. Some glass effects need Android 13 or newer.
 
-### What's new in 1.1.0
-- Tab switcher: a liquid glass "Close all" capsule above the bar (with confirmation); the tab group selector at the top was removed.
+### What's new in 1.1.1
+- "Close all" closes every tab right away (no confirmation) and opens the start page; fixed a crash.
+
+### 1.1.0
+- Tab switcher: a liquid glass "Close all" capsule above the bar; the tab group selector at the top was removed.
 
 ### 1.0.3
 - Plain http:// sites load again (no more ERR_CLEARTEXT_NOT_PERMITTED).

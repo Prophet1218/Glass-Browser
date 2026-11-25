@@ -6007,7 +6007,7 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         handler.post { if (!isDestroyed) tv.background = glassBubble(dp(100).toFloat()) }
         // a lapváltó alján, a sáv fölött: minden lap bezárása
         tv.contentDescription = L.t("Összes bezárása")
-        tv.setOnClickListener { confirmCloseAll() }
+        tv.setOnClickListener { closeAllTabs() }
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
         lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         // a lencse fölött (nem a lapváltóban): így a felső elmosás nem megy rá, alá pedig a
@@ -6067,40 +6067,24 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         }
     }
 
-    private fun confirmCloseAll() {
-        if (overviewBusy || tabs.isEmpty()) return
-        haptic()
-        val n = tabs.size
-        androidx.appcompat.app.AlertDialog.Builder(this, R.style.GlassDialog)
-            .setTitle(if (L.en) "Close all $n tabs?" else "Mind a(z) $n lap bezárása?")
-            .setPositiveButton(L.t("Összes bezárása")) { _, _ -> closeAllTabs() }
-            .setNegativeButton(L.t("Mégse"), null)
-            .show()
-    }
-
     /** Az összes (látható) lap bezárása: a kártyák lépcsőzetesen eltűnnek, utána új kezdőlap. */
     private fun closeAllTabs() {
         if (overviewBusy || tabs.isEmpty()) return
+        haptic()
         endLiveCard(now = true)
         removeLiveDecor()
-        overviewBusy = true
         hideGroupCapsule()
+        val keep = activeTab?.takeIf { it in tabs } ?: tabs.last()
+        // a kártyák lépcsőzetesen eltűnnek
         val kids = (0 until tabList.childCount).map { tabList.getChildAt(it) }.sortedBy { it.top * 10 + it.left }
         kids.forEachIndexed { i, v ->
             v.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).translationY(dp(24).toFloat())
-                .setStartDelay(25L * i).setDuration(220L).setInterpolator(DecelerateInterpolator()).start()
+                .setStartDelay(20L * i.coerceAtMost(10)).setDuration(200L)
+                .setInterpolator(DecelerateInterpolator()).start()
         }
+        overviewBusy = true
         handler.postDelayed({
-            val wasPrivate = privateMode
-            val all = ArrayList(tabs)
-            for (t in all) {
-                (t.webView.parent as? ViewGroup)?.removeView(t.webView)
-                t.webView.destroy()
-                t.thumbnail = null
-                ThumbStore.delete(applicationContext, t.id)
-            }
-            tabs.clear()
-            activeTab = null
+            overviewBusy = false
             for (v in kids) {
                 v.animate().cancel()
                 v.alpha = 1f
@@ -6108,20 +6092,24 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
                 v.scaleY = 1f
                 v.translationY = 0f
             }
-            overviewBusy = false
-            if (wasPrivate) {
-                tabAdapter.notifyDataSetChanged()
-                leavePrivate()
-                updateTabCount()
-                return@postDelayed
+            // a többi lap csendben megszűnik; az utolsót a megszokott bezárás zárja be, ami
+            // új kezdőlapot nyit (vagy privát módban visszavált a normál lapokra)
+            for (t in ArrayList(tabs)) {
+                if (t === keep) continue
+                tabs.remove(t)
+                (t.webView.parent as? ViewGroup)?.removeView(t.webView)
+                t.webView.destroy()
+                t.thumbnail = null
+                ThumbStore.delete(applicationContext, t.id)
             }
-            val fresh = createTab()
-            fresh.url = homeUrl()
-            fresh.pendingUrl = fresh.url
             tabAdapter.notifyDataSetChanged()
             updateTabCount()
-            tabList.post { openTabFromOverview(fresh) }
-        }, 25L * kids.size.coerceAtMost(12) + 240L)
+            if (keep in tabs) {
+                if (activeTab !== keep) activeTab = keep
+                closeTab(keep)
+            }
+            saveTabs()
+        }, 20L * kids.size.coerceAtMost(10) + 220L)
     }
 
     private fun updateGroupCapsule() {

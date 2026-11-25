@@ -44,7 +44,7 @@ class GroupTabList(private val base: MutableList<Tab>, val group: String) : Abst
 }
 
 /** A lapváltó tetején a csoportválasztó kapszula helye (dp): ennyivel lejjebb kezdődik a rács. */
-const val GROUP_BAR_SPACE_DP = 46
+const val GROUP_BAR_SPACE_DP = 0
 
 /** A lapcsoportok nevei és a kiválasztott csoport (a beállítások között, JSON-ként). */
 object TabGroups {

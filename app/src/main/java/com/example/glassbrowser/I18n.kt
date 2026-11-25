@@ -181,6 +181,7 @@ object L {
         "zöld" to "green",
         "rózsaszín" to "pink",
         "szürke" to "gray",
+        "Összes bezárása" to "Close all",
         "Megnyitás ezzel" to "Open with",
         "Szürke alap" to "Gray base",
         "lila" to "purple",

@@ -1,4 +1,4 @@
-**Glass Browser 1.0.3** is a personal Android browser built on Chromium WebView. It has a Safari-inspired liquid glass interface.
+**Glass Browser 1.1.0** is a personal Android browser built on Chromium WebView. It has a Safari-inspired liquid glass interface.
 
 ### Interface
 - **Floating liquid glass search bar.** Real-time blur, edge refraction and an optional convex 3D look. A glow follows your finger, and the capsule stretches toward it.
@@ -6,13 +6,13 @@
   - Pages with a fixed header get the header's solid color.
   - Other pages flow under a soft blur.
   - Icons switch between light and dark automatically.
-- **Liquid glass everywhere.** Menus, the tab group capsule, the find-on-page bar, the translate pill, toasts, the settings switches and sliders, and the download buttons.
+- **Liquid glass everywhere.** Menus, the close-all capsule, the find-on-page bar, the translate pill, toasts, the settings switches and sliders, and the download buttons.
 - **Adjustable animations.** A global speed slider, a selectable tab close animation and a selectable bar-swipe transition (blur, page turn, slide, fade, zoom, card deck).
 - **Light, dark and clear glass tones**, plus a docked Chrome-style bar layout as an alternative.
 
 ### Browsing
 - **Swipe tabs on the bar.** Swipe the center capsule sideways to switch tabs. The whole transition follows your finger, including the status bar.
-- **Tab switcher.** A page that is still scrolling keeps scrolling inside its card and slows down naturally. Grid overview, swipe to close, tab groups and a private mode with a separate storage profile.
+- **Tab switcher.** A page that is still scrolling keeps scrolling inside its card and slows down naturally. Grid overview, swipe to close, close all and a private mode with a separate storage profile.
 - **Search panel.** Results, bookmarks and history tabs (swipe between them), suggestions with site icons, and long-press to copy or delete an entry.
 - **Find on page, text size per site, and a long-press menu for links and images.** The menu offers open in new tab, copy, share and save image.
 - **In-place page translation** with an animated glass pill.
@@ -34,7 +34,10 @@
 
 Requires Android 8.0 or newer. Some glass effects need Android 13 or newer.
 
-### What's new in 1.0.3
+### What's new in 1.1.0
+- Tab switcher: a liquid glass "Close all" capsule above the bar (with confirmation); the tab group selector at the top was removed.
+
+### 1.0.3
 - Plain http:// sites load again (no more ERR_CLEARTEXT_NOT_PERMITTED).
 
 ### 1.0.2

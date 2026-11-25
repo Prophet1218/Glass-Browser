@@ -709,7 +709,7 @@ class MainActivity : AppCompatActivity() {
         (progress.layoutParams as FrameLayout.LayoutParams).topMargin = webTopY
         tabList.setPadding(
             dp(9), webTopY + dp(10) + dp(GROUP_BAR_SPACE_DP), dp(9),
-            navBottom + if (dockTop) dp(24) else barHeight + dp(30)
+            navBottom + (if (dockTop) dp(24) else barHeight + dp(30)) + dp(50)
         )
         layoutGroupCapsule(webTopY)
         tabs.forEach { applyWebTop(it.webView) }
@@ -5987,13 +5987,8 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
 
     /** Induláskor: a legutóbb kiválasztott csoport marad, ha az aktív lap abban van. */
     private fun restoreTabGroup() {
-        val sel = TabGroups.selected(prefs)
-        if (sel.isNotEmpty() && !privateMode && activeTab?.group == sel) {
-            groupSel = sel
-            tabs = normalShown()
-        } else if (sel.isNotEmpty()) {
-            TabGroups.setSelected(prefs, "")
-        }
+        // a csoportválasztó kikerült: mindig minden lap látszik
+        if (TabGroups.selected(prefs).isNotEmpty()) TabGroups.setSelected(prefs, "")
         updateTabCount()
     }
 
@@ -6006,37 +6001,21 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         tv.isSingleLine = true
         tv.ellipsize = TextUtils.TruncateAt.END
         tv.maxWidth = dp(240)
-        tv.setPadding(dp(16), 0, dp(12), 0)
-        tv.compoundDrawablePadding = dp(4)
+        tv.setPadding(dp(20), 0, dp(20), 0)
+        tv.compoundDrawablePadding = dp(6)
         // az üveg bőre az indulás végén (a glassBubble az üveg beállításait is újra alkalmazza)
         handler.post { if (!isDestroyed) tv.background = glassBubble(dp(100).toFloat()) }
-        tv.contentDescription = L.t("Lapcsoportok")
-        tv.setOnClickListener { showGroupMenu() }
-        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
-        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        // a lapváltó alján, a sáv fölött: minden lap bezárása
+        tv.contentDescription = L.t("Összes bezárása")
+        tv.setOnClickListener { confirmCloseAll() }
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+        lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         // a lencse fölött (nem a lapváltóban): így a felső elmosás nem megy rá, alá pedig a
         // lencse valódi üveget rajzol
         root.addView(tv, lp)
         tv.visibility = View.GONE
         tv.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateLens() }
         groupCapsule = tv
-        // hosszú nyomás a kártyán: áthelyezés másik csoportba
-        tabList.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
-            override fun onChildViewAttachedToWindow(view: View) {
-                val card = view.findViewById<View>(R.id.tabCard) ?: return
-                card.setOnLongClickListener {
-                    val tab = tabs.getOrNull(tabList.getChildAdapterPosition(view))
-                    if (tab == null || tab.isPrivate || overviewBusy || !overviewShown) {
-                        return@setOnLongClickListener false
-                    }
-                    haptic()
-                    showMoveToGroup(tab, card)
-                    true
-                }
-            }
-
-            override fun onChildViewDetachedFromWindow(view: View) {}
-        })
         layoutGroupCapsule(-1)
         updateGroupCapsule()
     }
@@ -6075,14 +6054,74 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
     }
 
     /** A kapszula helye: a rács fölött (a rács ennyivel lejjebb kezdődik, lásd applyLayoutInsets). */
+    @Suppress("UNUSED_PARAMETER")
     private fun layoutGroupCapsule(webTopY: Int) {
         val tv = groupCapsule ?: return
         val lp = tv.layoutParams as? FrameLayout.LayoutParams ?: return
-        val top = if (webTopY >= 0) webTopY + dp(12) else tabList.paddingTop - dp(GROUP_BAR_SPACE_DP - 2)
-        if (lp.topMargin != top) {
-            lp.topMargin = top
+        // a sáv teteje fölött 12 dp-vel
+        val barH = barRow.layoutParams.height.coerceAtLeast(dp(56))
+        val bottom = navBottom + (if (dockTop) dp(16) else barH + dp(22))
+        if (lp.bottomMargin != bottom) {
+            lp.bottomMargin = bottom
             tv.layoutParams = lp
         }
+    }
+
+    private fun confirmCloseAll() {
+        if (overviewBusy || tabs.isEmpty()) return
+        haptic()
+        val n = tabs.size
+        androidx.appcompat.app.AlertDialog.Builder(this, R.style.GlassDialog)
+            .setTitle(if (L.en) "Close all $n tabs?" else "Mind a(z) $n lap bezárása?")
+            .setPositiveButton(L.t("Összes bezárása")) { _, _ -> closeAllTabs() }
+            .setNegativeButton(L.t("Mégse"), null)
+            .show()
+    }
+
+    /** Az összes (látható) lap bezárása: a kártyák lépcsőzetesen eltűnnek, utána új kezdőlap. */
+    private fun closeAllTabs() {
+        if (overviewBusy || tabs.isEmpty()) return
+        endLiveCard(now = true)
+        removeLiveDecor()
+        overviewBusy = true
+        hideGroupCapsule()
+        val kids = (0 until tabList.childCount).map { tabList.getChildAt(it) }.sortedBy { it.top * 10 + it.left }
+        kids.forEachIndexed { i, v ->
+            v.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).translationY(dp(24).toFloat())
+                .setStartDelay(25L * i).setDuration(220L).setInterpolator(DecelerateInterpolator()).start()
+        }
+        handler.postDelayed({
+            val wasPrivate = privateMode
+            val all = ArrayList(tabs)
+            for (t in all) {
+                (t.webView.parent as? ViewGroup)?.removeView(t.webView)
+                t.webView.destroy()
+                t.thumbnail = null
+                ThumbStore.delete(applicationContext, t.id)
+            }
+            tabs.clear()
+            activeTab = null
+            for (v in kids) {
+                v.animate().cancel()
+                v.alpha = 1f
+                v.scaleX = 1f
+                v.scaleY = 1f
+                v.translationY = 0f
+            }
+            overviewBusy = false
+            if (wasPrivate) {
+                tabAdapter.notifyDataSetChanged()
+                leavePrivate()
+                updateTabCount()
+                return@postDelayed
+            }
+            val fresh = createTab()
+            fresh.url = homeUrl()
+            fresh.pendingUrl = fresh.url
+            tabAdapter.notifyDataSetChanged()
+            updateTabCount()
+            tabList.post { openTabFromOverview(fresh) }
+        }, 25L * kids.size.coerceAtMost(12) + 240L)
     }
 
     private fun updateGroupCapsule() {
@@ -6090,13 +6129,13 @@ window.__gbObs.observe(d.documentElement,{childList:true,subtree:true,attributes
         if (privateMode) tv.visibility = View.GONE
         else if (overviewShown && !overviewBusy && tv.visibility != View.VISIBLE) showGroupCapsule()
         updateLens()
-        tv.text = if (groupSel.isEmpty()) L.t("Minden lap") else groupSel
+        tv.text = L.t("Összes bezárása")
         val col = menuTextColor()
         tv.setTextColor(col)
-        val ic = ContextCompat.getDrawable(this, R.drawable.ic_chevron_down)?.mutate()
-        ic?.setBounds(0, 0, dp(18), dp(18))
+        val ic = ContextCompat.getDrawable(this, R.drawable.ic_close)?.mutate()
+        ic?.setBounds(0, 0, dp(16), dp(16))
         ic?.setTint(col)
-        tv.setCompoundDrawablesRelative(null, null, ic, null)
+        tv.setCompoundDrawablesRelative(ic, null, null, null)
     }
 
     /** Az új üveg felületek (felugró lista, olvasási lista, olvasó) közös eszközei. */
